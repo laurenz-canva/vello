@@ -295,7 +295,7 @@ impl Scene {
 
         // Create root node (layer_id 0) as the first node (will be node 0).
         // This ensures the root layer is always rendered last in the execution order.
-        let wtile_bbox = WideTilesBbox::new([0, 0, wide.width_tiles(), wide.height_tiles()]);
+        let wtile_bbox = WideTilesBbox::new(0, 0, wide.width_tiles(), wide.height_tiles());
         let _ = render_graph.add_node(RenderNodeKind::RootLayer {
             layer_id: 0,
             wtile_bbox,
@@ -738,6 +738,17 @@ impl Scene {
         self.render_state.stroke = stroke;
     }
 
+    /// Get the current stroke.
+    pub fn stroke(&self) -> &Stroke {
+        &self.render_state.stroke
+    }
+
+    /// Get a mutable reference to the current stroke.
+    #[cfg(feature = "text")]
+    pub(crate) fn stroke_mut(&mut self) -> &mut Stroke {
+        &mut self.render_state.stroke
+    }
+
     /// Set the paint for subsequent rendering operations.
     // TODO: This API is not final. Supporting images from a pixmap is explicitly out of scope.
     //       Instead images should be passed via a backend-agnostic opaque id, and be hydrated at
@@ -842,7 +853,7 @@ impl Scene {
         self.layer_id_next = 0;
         self.render_graph.clear();
         let wtile_bbox =
-            WideTilesBbox::new([0, 0, self.wide.width_tiles(), self.wide.height_tiles()]);
+            WideTilesBbox::new(0, 0, self.wide.width_tiles(), self.wide.height_tiles());
         self.render_graph.add_node(RenderNodeKind::RootLayer {
             layer_id: 0,
             wtile_bbox,
@@ -999,7 +1010,7 @@ impl Scene {
                         self.render_state.transform,
                         self.aliasing_threshold,
                         &mut strip_storage,
-                        None,
+                        self.clip_context.get(),
                     );
                     strip_start_indices.push(start_index);
                 }
@@ -1010,7 +1021,7 @@ impl Scene {
                         self.render_state.transform,
                         self.aliasing_threshold,
                         &mut strip_storage,
-                        None,
+                        self.clip_context.get(),
                     );
                     strip_start_indices.push(start_index);
                 }
@@ -1021,7 +1032,7 @@ impl Scene {
                         self.render_state.transform,
                         self.aliasing_threshold,
                         &mut strip_storage,
-                        None,
+                        self.clip_context.get(),
                     );
                     strip_start_indices.push(start_index);
                 }
@@ -1032,7 +1043,7 @@ impl Scene {
                         self.render_state.transform,
                         self.aliasing_threshold,
                         &mut strip_storage,
-                        None,
+                        self.clip_context.get(),
                     );
                     strip_start_indices.push(start_index);
                 }

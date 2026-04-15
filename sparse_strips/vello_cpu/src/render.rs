@@ -469,9 +469,15 @@ impl RenderContext {
         self.state.stroke = stroke;
     }
 
-    /// Get the current stroke
+    /// Get the current stroke.
     pub fn stroke(&self) -> &Stroke {
         &self.state.stroke
+    }
+
+    /// Get a mutable reference to the current stroke.
+    #[cfg(feature = "text")]
+    pub(crate) fn stroke_mut(&mut self) -> &mut Stroke {
+        &mut self.state.stroke
     }
 
     /// Set the current paint.
@@ -955,7 +961,7 @@ impl RenderContext {
                         self.state.transform,
                         self.aliasing_threshold,
                         &mut strip_storage,
-                        None,
+                        self.dispatcher.current_clip_path(),
                     );
                     strip_start_indices.push(start_index);
                 }
@@ -966,7 +972,7 @@ impl RenderContext {
                         self.state.transform,
                         self.aliasing_threshold,
                         &mut strip_storage,
-                        None,
+                        self.dispatcher.current_clip_path(),
                     );
                     strip_start_indices.push(start_index);
                 }
@@ -978,7 +984,7 @@ impl RenderContext {
                         self.state.transform,
                         self.aliasing_threshold,
                         &mut strip_storage,
-                        None,
+                        self.dispatcher.current_clip_path(),
                     );
                     strip_start_indices.push(start_index);
                 }
@@ -990,7 +996,7 @@ impl RenderContext {
                         self.state.transform,
                         self.aliasing_threshold,
                         &mut strip_storage,
-                        None,
+                        self.dispatcher.current_clip_path(),
                     );
                     strip_start_indices.push(start_index);
                 }
