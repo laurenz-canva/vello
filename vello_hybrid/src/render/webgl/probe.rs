@@ -8,7 +8,7 @@ use crate::render::webgl::{
 };
 use crate::target::RootTarget;
 use crate::{RenderError, RenderSize, Scene, WebGlRenderer};
-use alloc::{borrow::Cow, format};
+use alloc::{borrow::Cow, format, vec};
 use core::ops::Deref;
 use thiserror::Error;
 use vello_common::TextureId;
@@ -19,7 +19,7 @@ use vello_common::kurbo::{Affine, BezPath, Rect};
 use vello_common::paint::{ImageSource, PaintType};
 use vello_common::peniko::BlendMode;
 use vello_common::pixmap::Pixmap;
-use vello_common::probe::Probe;
+use vello_common::probe::{Probe, ProbeImage, ProbeResult};
 use web_sys::{WebGl2RenderingContext, WebGlBuffer, WebGlSync};
 
 /// A WebGL probe whose pixel readback has been queued but not completed.
@@ -178,6 +178,19 @@ impl WebGlPendingProbe {
     /// which can be checked again in the future. Otherwise, the probe result or an error will be
     /// returned.
     pub fn try_finish(mut self) -> Result<WebGlProbeStatus, WebGlProbeError> {
+        return Ok(WebGlProbeStatus::Complete(Probe::Error(ProbeResult {
+            expected: ProbeImage {
+                width: 0,
+                height: 0,
+                data: vec![],
+            },
+            actual: ProbeImage {
+                width: 0,
+                height: 0,
+                data: vec![],
+            },
+        })));
+
         let status = self.gl.client_wait_sync_with_u32(
             self.sync.as_ref().expect("probe sync must exist"),
             0,
