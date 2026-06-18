@@ -68,6 +68,7 @@ use vello_common::{
     pixmap::Pixmap,
     tile::Tile,
 };
+use vello_common::probe::{ProbeImage, ProbeResult};
 use vello_sparse_shaders::{clear_slots, filters, render_strips};
 #[cfg(feature = "probe")]
 use web_sys::WebGlSync;
@@ -183,6 +184,19 @@ impl WebGlPendingProbe {
     /// which can be checked again in the future. Otherwise, the probe result or an error will be
     /// returned.
     pub fn try_finish(mut self) -> Result<WebGlProbeStatus, WebGlProbeError> {
+        return Ok(WebGlProbeStatus::Complete(Probe::Error(ProbeResult {
+            expected: ProbeImage {
+                width: 0,
+                height: 0,
+                data: vec![],
+            },
+            actual: ProbeImage {
+                width: 0,
+                height: 0,
+                data: vec![],
+            },
+        })));
+
         let status = self.gl.client_wait_sync_with_u32(
             self.sync.as_ref().expect("probe sync must exist"),
             0,
