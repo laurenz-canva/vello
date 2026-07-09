@@ -26,7 +26,10 @@ hashbrown = { workspace = true }
 
 js-sys = { workspace = true, optional = true }
 web-sys = { workspace = true, features = [
+    "Document",
+    "Element",
     "HtmlCanvasElement",
+    "Window",
     "WebGl2RenderingContext",
     "WebGlContextAttributes",
     "WebGlProgram",

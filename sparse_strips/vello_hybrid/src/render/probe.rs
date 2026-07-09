@@ -4,11 +4,10 @@
 use crate::render::common::IMAGE_PADDING;
 use crate::render::webgl::resource::Framebuffer;
 use crate::render::webgl::{
-    WebGlStateConfig, WebGlStateGuard, create_atlas_texture_array, create_framebuffer_for_texture,
-    create_texture,
+    WebGlStateConfig, WebGlStateGuard, create_framebuffer_for_texture, create_texture,
 };
 use crate::schedule::RootRenderTarget;
-use crate::{RenderError, RenderSize, Scene, WebGlRenderer};
+use crate::{RenderError, RenderSettings, RenderSize, Scene, WebGlRenderer};
 use alloc::sync::Arc;
 use core::ops::Deref;
 use thiserror::Error;
@@ -20,7 +19,19 @@ use vello_common::paint::{ImageSource, PaintType};
 use vello_common::peniko::BlendMode;
 use vello_common::pixmap::Pixmap;
 use vello_common::probe::Probe;
-use web_sys::{WebGl2RenderingContext, WebGlBuffer, WebGlSync};
+use web_sys::wasm_bindgen::JsCast;
+use web_sys::{HtmlCanvasElement, WebGl2RenderingContext, WebGlBuffer, WebGlSync};
+
+const PROBE_ATLAS_CONFIG: AtlasConfig = AtlasConfig {
+    initial_atlas_count: 1,
+    // The probe's filter layer requires three 268x32 allocations, which must be spread
+    // out onto two different atlas textures.
+    // We add some additional padding for additional safety.
+    atlas_size: (280, 80),
+    max_atlases: 2,
+    auto_grow: true,
+    allocation_strategy: AllocationStrategy::FirstFit,
+};
 
 /// A WebGL probe whose pixel readback has been queued but not completed.
 #[derive(Debug)]
@@ -35,6 +46,9 @@ pub struct WebGlPendingProbe {
 /// Error returned while running a WebGL probe.
 #[derive(Debug, Clone, Error)]
 pub enum WebGlProbeError {
+    /// The canvas used for probing could not be created.
+    #[error("probe canvas creation failed")]
+    CanvasCreationError,
     /// Rendering the probe scene failed.
     #[error("probe render failed: {0}")]
     Render(RenderError),
@@ -67,8 +81,24 @@ impl WebGlRenderer {
     /// This method will return a handle that allows inspecting the results of the probe once the
     /// results of the probe scene can be copied back from GPU to CPU. For performance reasons,
     /// anything in-between mostly happens asynchronously.
-    pub fn probe(&mut self) -> Result<WebGlPendingProbe, WebGlProbeError> {
-        self.probe_inner().map_err(WebGlProbeError::Render)
+    pub fn probe() -> Result<WebGlPendingProbe, WebGlProbeError> {
+        let (width, height) = vello_common::probe::canvas_size();
+        let canvas = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.create_element("canvas").ok())
+            .and_then(|element| element.dyn_into::<HtmlCanvasElement>().ok())
+            .ok_or(WebGlProbeError::CanvasCreationError)?;
+        canvas.set_width(u32::from(width));
+        canvas.set_height(u32::from(height));
+
+        let mut renderer = Self::new_with(
+            &canvas,
+            RenderSettings {
+                atlas_config: PROBE_ATLAS_CONFIG,
+                ..RenderSettings::default()
+            },
+        );
+        renderer.probe_inner().map_err(WebGlProbeError::Render)
     }
 
     fn probe_inner(&mut self) -> Result<WebGlPendingProbe, RenderError> {
@@ -110,23 +140,7 @@ impl WebGlRenderer {
             .unwrap();
         let probe_framebuffer = create_framebuffer_for_texture(&self.gl, &probe_texture);
 
-        let atlas_config = AtlasConfig {
-            initial_atlas_count: 1,
-            // These should be large enough for the probe scene.
-            atlas_size: (256, 256),
-            max_atlases: 1,
-            auto_grow: true,
-            allocation_strategy: AllocationStrategy::FirstFit,
-        };
-        let (atlas_width, atlas_height) = atlas_config.atlas_size;
-
-        let mut probe_image_cache = ImageCache::new_with_config(atlas_config);
-        let mut probe_atlas_texture_array =
-            create_atlas_texture_array(&self.gl, atlas_width, atlas_height, 1);
-        core::mem::swap(
-            &mut self.programs.resources.atlas_texture_array,
-            &mut probe_atlas_texture_array,
-        );
+        let mut probe_image_cache = ImageCache::new_with_config(PROBE_ATLAS_CONFIG);
 
         let probe_image = Arc::new(vello_common::probe::probe_image_pixmap());
         // Note: No need to destroy the image explicitly in the end, because we discard the image
@@ -142,34 +156,20 @@ impl WebGlRenderer {
             ),
         );
 
-        let previous_view_framebuffer = self
-            .programs
-            .resources
-            .view_framebuffer_override
-            .replace(probe_framebuffer);
-        let render_result = self.render_scene(
+        self.programs.resources.view_framebuffer_override = Some(probe_framebuffer);
+        self.render_scene(
             &scene,
             &mut probe_image_cache,
             &render_size,
             true,
             RootRenderTarget::AtlasLayer,
-        );
+        )?;
         let probe_framebuffer = self
             .programs
             .resources
             .view_framebuffer_override
             .take()
-            .expect("probe framebuffer must be restored after rendering");
-        self.programs.resources.view_framebuffer_override = previous_view_framebuffer;
-
-        core::mem::swap(
-            &mut self.programs.resources.atlas_texture_array,
-            &mut probe_atlas_texture_array,
-        );
-
-        // We do this here instead of above such that in case the render result is not
-        // valid, we still properly restore the state (e.g. the old atlas texture array).
-        render_result?;
+            .expect("probe framebuffer must be available after rendering");
 
         let pending = launch_probe(&self.gl, &probe_framebuffer, width, height);
 

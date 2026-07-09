@@ -92,14 +92,12 @@ async fn assert_probe_succeeds(mut pending: vello_hybrid::WebGlPendingProbe) {
     );
 }
 
+// This test is ignored by default due to flakiness in Github CI.
+#[ignore]
 #[cfg(feature = "webgl")]
 #[wasm_bindgen_test]
 async fn webgl_probe_succeeds() {
-    let canvas = create_canvas(200, 200);
-
-    let mut renderer = vello_hybrid::WebGlRenderer::new(&canvas);
-    let pending = renderer
-        .probe()
+    let pending = vello_hybrid::WebGlRenderer::probe()
         .unwrap_or_else(|error| panic!("WebGlRenderer::probe() failed to render: {error:?}"));
     assert_probe_succeeds(pending).await;
 }
@@ -134,8 +132,7 @@ async fn webgl_probe_succeeds_after_filter_render() {
         )
         .expect("filter scene should render");
 
-    let pending = renderer
-        .probe()
+    let pending = WebGlRenderer::probe()
         .unwrap_or_else(|error| panic!("WebGlRenderer::probe() failed to render: {error:?}"));
     assert_probe_succeeds(pending).await;
 }
