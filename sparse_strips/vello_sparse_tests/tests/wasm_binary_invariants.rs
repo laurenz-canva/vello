@@ -92,8 +92,6 @@ async fn assert_probe_succeeds(mut pending: vello_hybrid::WebGlPendingProbe) {
     );
 }
 
-// This test is ignored by default due to flakiness in Github CI.
-#[ignore]
 #[cfg(feature = "webgl")]
 #[wasm_bindgen_test]
 async fn webgl_probe_succeeds() {
@@ -104,7 +102,7 @@ async fn webgl_probe_succeeds() {
 
 #[cfg(feature = "webgl")]
 #[wasm_bindgen_test]
-async fn webgl_probe_succeeds_after_filter_render() {
+async fn webgl_probe_succeeds_after_filter() {
     use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
     use vello_common::kurbo::Rect;
     use vello_hybrid::{RenderSize, Resources, Scene, WebGlRenderer};
