@@ -40,15 +40,25 @@ async fn no_simd_instruction_inclusion() {
     );
 }
 
-// This test is ignored by default due to flakiness in Github CI.
-#[ignore]
 #[cfg(feature = "webgl")]
-#[wasm_bindgen_test]
-async fn webgl_probe_succeeds() {
-    use vello_hybrid::WebGlProbeStatus;
+fn create_canvas(width: u32, height: u32) -> web_sys::HtmlCanvasElement {
     use wasm_bindgen::JsCast;
+
+    let document = web_sys::window().unwrap().document().unwrap();
+    let canvas = document
+        .create_element("canvas")
+        .unwrap()
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .unwrap();
+    canvas.set_width(width);
+    canvas.set_height(height);
+    canvas
+}
+
+#[cfg(feature = "webgl")]
+async fn assert_probe_succeeds(mut pending: vello_hybrid::WebGlPendingProbe) {
+    use vello_hybrid::WebGlProbeStatus;
     use wasm_bindgen_futures::JsFuture;
-    use web_sys::HtmlCanvasElement;
 
     async fn wait_for_animation_frame() {
         let promise = web_sys::js_sys::Promise::new(&mut |resolve, _reject| {
@@ -59,20 +69,6 @@ async fn webgl_probe_succeeds() {
         });
         JsFuture::from(promise).await.unwrap();
     }
-
-    let document = web_sys::window().unwrap().document().unwrap();
-    let canvas = document
-        .create_element("canvas")
-        .unwrap()
-        .dyn_into::<HtmlCanvasElement>()
-        .unwrap();
-    canvas.set_width(200);
-    canvas.set_height(200);
-
-    let mut renderer = vello_hybrid::WebGlRenderer::new(&canvas);
-    let mut pending = renderer
-        .probe()
-        .unwrap_or_else(|error| panic!("WebGlRenderer::probe() failed to render: {error:?}"));
 
     const MAX_FRAMES: u32 = 600;
 
@@ -96,6 +92,54 @@ async fn webgl_probe_succeeds() {
     );
 }
 
+#[cfg(feature = "webgl")]
+#[wasm_bindgen_test]
+async fn webgl_probe_succeeds() {
+    let canvas = create_canvas(200, 200);
+
+    let mut renderer = vello_hybrid::WebGlRenderer::new(&canvas);
+    let pending = renderer
+        .probe()
+        .unwrap_or_else(|error| panic!("WebGlRenderer::probe() failed to render: {error:?}"));
+    assert_probe_succeeds(pending).await;
+}
+
+#[cfg(feature = "webgl")]
+#[wasm_bindgen_test]
+async fn webgl_probe_succeeds_after_filter_render() {
+    use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
+    use vello_common::kurbo::Rect;
+    use vello_hybrid::{RenderSize, Resources, Scene, WebGlRenderer};
+
+    let canvas = create_canvas(200, 200);
+
+    let mut renderer = WebGlRenderer::new(&canvas);
+    let mut scene = Scene::new(200, 200);
+    scene.push_filter_layer(Filter::from_primitive(FilterPrimitive::GaussianBlur {
+        std_deviation: 2.0,
+        edge_mode: EdgeMode::None,
+    }));
+    scene.set_paint(vello_common::color::palette::css::REBECCA_PURPLE);
+    scene.fill_rect(&Rect::new(20.0, 20.0, 80.0, 80.0));
+    scene.pop_layer();
+
+    renderer
+        .render(
+            &scene,
+            &mut Resources::new(),
+            &RenderSize {
+                width: 200,
+                height: 200,
+            },
+        )
+        .expect("filter scene should render");
+
+    let pending = renderer
+        .probe()
+        .unwrap_or_else(|error| panic!("WebGlRenderer::probe() failed to render: {error:?}"));
+    assert_probe_succeeds(pending).await;
+}
+
 // This test reproduces a bug where creating a renderer would leave a non-default framebuffer without
 // depth attachment bound, as a result of which `DEPTH_BITS` would return 0 when creating a second
 // renderer.
@@ -103,17 +147,8 @@ async fn webgl_probe_succeeds() {
 #[wasm_bindgen_test]
 fn webgl_create_renderer_twice() {
     use vello_hybrid::WebGlRenderer;
-    use wasm_bindgen::JsCast;
-    use web_sys::HtmlCanvasElement;
 
-    let document = web_sys::window().unwrap().document().unwrap();
-    let canvas = document
-        .create_element("canvas")
-        .unwrap()
-        .dyn_into::<HtmlCanvasElement>()
-        .unwrap();
-    canvas.set_width(16);
-    canvas.set_height(16);
+    let canvas = create_canvas(16, 16);
 
     let _ = WebGlRenderer::new(&canvas);
     let _ = WebGlRenderer::new(&canvas);
