@@ -8,7 +8,7 @@ use crate::render::webgl::{
 };
 use crate::target::RootTarget;
 use crate::{RenderError, RenderSize, Scene, WebGlRenderer};
-use alloc::{borrow::Cow, format};
+use alloc::{borrow::Cow, format, string::String};
 use core::ops::Deref;
 use thiserror::Error;
 use vello_common::TextureId;
@@ -30,6 +30,14 @@ pub struct WebGlPendingProbe {
     buffer: Option<WebGlBuffer>,
     width: u16,
     height: u16,
+    forced_result: ForcedProbeResult,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ForcedProbeResult {
+    Actual,
+    Pass,
+    Mismatch,
 }
 
 /// Error returned while running a WebGL probe.
@@ -41,6 +49,13 @@ pub enum WebGlProbeError {
     /// Finishing the probe failed.
     #[error("probe failed to finish: {}", webgl_error_name(*.0))]
     FinishFailed(u32),
+    /// The requested temporary probe mode is unknown.
+    #[error(
+        "unknown probe mode {0:?}; expected \"actual\", \"pass\", \"mismatch\", \"no-error\", \
+         \"invalid-enum\", \"invalid-value\", \"invalid-operation\", \
+         \"invalid-framebuffer-operation\", \"out-of-memory\", or \"context-lost\""
+    )]
+    UnknownMode(String),
 }
 
 /// Result of polling the WebGL probe.
@@ -67,11 +82,29 @@ impl WebGlRenderer {
     /// This method will return a handle that allows inspecting the results of the probe once the
     /// results of the probe scene can be copied back from GPU to CPU. For performance reasons,
     /// anything in-between mostly happens asynchronously.
-    pub fn probe(&mut self) -> Result<WebGlPendingProbe, WebGlProbeError> {
-        self.probe_inner().map_err(WebGlProbeError::Render)
+    /// The temporary `mode` argument accepts `"actual"`, `"pass"`, `"mismatch"`, or the name of
+    /// any WebGL error handled by the probe.
+    pub fn probe(&mut self, mode: &str) -> Result<WebGlPendingProbe, WebGlProbeError> {
+        let forced_result = match mode {
+            "actual" => ForcedProbeResult::Actual,
+            "pass" => ForcedProbeResult::Pass,
+            "mismatch" => ForcedProbeResult::Mismatch,
+            _ => {
+                return match webgl_error_from_mode(mode) {
+                    Some(error) => Err(WebGlProbeError::FinishFailed(error)),
+                    None => Err(WebGlProbeError::UnknownMode(mode.into())),
+                };
+            }
+        };
+
+        self.probe_inner(forced_result)
+            .map_err(WebGlProbeError::Render)
     }
 
-    fn probe_inner(&mut self) -> Result<WebGlPendingProbe, RenderError> {
+    fn probe_inner(
+        &mut self,
+        forced_result: ForcedProbeResult,
+    ) -> Result<WebGlPendingProbe, RenderError> {
         // IMPORTANT NOTE: When making any changes to the probe, make sure to
         // unignore and rerun the "webgl_probe_succeeds" test locally.
 
@@ -172,7 +205,7 @@ impl WebGlRenderer {
         // Propagate render failures only after restoring the framebuffer override.
         render_result?;
 
-        let pending = launch_probe(&self.gl, &probe_framebuffer, width, height);
+        let pending = launch_probe(&self.gl, &probe_framebuffer, width, height, forced_result);
 
         Ok(pending)
     }
@@ -231,11 +264,37 @@ impl WebGlPendingProbe {
         );
         readback.copy_to(pixmap.data_as_u8_slice_mut());
 
-        Probe::from_actual(pixmap)
+        match self.forced_result {
+            ForcedProbeResult::Actual => Probe::from_actual(pixmap),
+            ForcedProbeResult::Pass => Probe::Success,
+            ForcedProbeResult::Mismatch => {
+                for pixel in pixmap.data_as_u8_slice_mut().chunks_exact_mut(4).take(5) {
+                    pixel[3] = if pixel[3] <= 127 { u8::MAX } else { 0 };
+                }
+                Probe::from_actual(pixmap)
+            }
+        }
     }
 
     fn finish_failure(&self) -> WebGlProbeError {
         WebGlProbeError::FinishFailed(self.gl.get_error())
+    }
+}
+
+fn webgl_error_from_mode(mode: &str) -> Option<u32> {
+    match mode {
+        "no-error" | "NO_ERROR" => Some(WebGl2RenderingContext::NO_ERROR),
+        "invalid-enum" | "INVALID_ENUM" => Some(WebGl2RenderingContext::INVALID_ENUM),
+        "invalid-value" | "INVALID_VALUE" => Some(WebGl2RenderingContext::INVALID_VALUE),
+        "invalid-operation" | "INVALID_OPERATION" => {
+            Some(WebGl2RenderingContext::INVALID_OPERATION)
+        }
+        "invalid-framebuffer-operation" | "INVALID_FRAMEBUFFER_OPERATION" => {
+            Some(WebGl2RenderingContext::INVALID_FRAMEBUFFER_OPERATION)
+        }
+        "out-of-memory" | "OUT_OF_MEMORY" => Some(WebGl2RenderingContext::OUT_OF_MEMORY),
+        "context-lost" | "CONTEXT_LOST_WEBGL" => Some(WebGl2RenderingContext::CONTEXT_LOST_WEBGL),
+        _ => None,
     }
 }
 
@@ -271,6 +330,7 @@ fn launch_probe(
     framebuffer: &Framebuffer,
     width: u16,
     height: u16,
+    forced_result: ForcedProbeResult,
 ) -> WebGlPendingProbe {
     let pixel_pack_buffer = gl.create_buffer().unwrap();
     let byte_len = i32::from(width) * i32::from(height) * 4;
@@ -315,6 +375,7 @@ fn launch_probe(
         buffer: Some(pixel_pack_buffer),
         width,
         height,
+        forced_result,
     }
 }
 

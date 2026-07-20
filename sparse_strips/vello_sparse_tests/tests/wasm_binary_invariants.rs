@@ -71,7 +71,7 @@ async fn webgl_probe_succeeds() {
 
     let (mut renderer, _) = vello_hybrid::WebGlRenderer::new(&canvas);
     let mut pending = renderer
-        .probe()
+        .probe("actual")
         .unwrap_or_else(|error| panic!("WebGlRenderer::probe() failed to render: {error:?}"));
 
     const MAX_FRAMES: u32 = 600;
