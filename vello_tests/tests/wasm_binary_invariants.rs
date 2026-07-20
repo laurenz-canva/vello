@@ -89,7 +89,7 @@ async fn run_webgl_probe(use_depth_buffer: bool) {
     )
     .unwrap();
     let mut pending = renderer
-        .probe(vello_common::probe::ALL_PROBE_ELEMENTS)
+        .probe(vello_common::probe::ALL_PROBE_ELEMENTS, "actual")
         .unwrap_or_else(|error| panic!("WebGlRenderer::probe() failed to render: {error:?}"));
 
     const MAX_FRAMES: u32 = 600;
