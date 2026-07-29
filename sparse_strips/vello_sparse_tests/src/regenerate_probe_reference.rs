@@ -4,16 +4,13 @@
 //! Regenerate the probe reference assets in `vello_common/assets`.
 
 use bytemuck::cast_slice;
-use std::{
-    path::PathBuf,
-    sync::{Arc, LazyLock},
-};
+use std::{path::PathBuf, sync::LazyLock};
 
 #[cfg(not(target_arch = "wasm32"))]
 use oxipng::Options;
 use vello_common::{
     kurbo::{Affine, BezPath, Rect},
-    paint::{ImageSource, PaintType},
+    paint::PaintType,
     pixmap::Pixmap,
     probe::{self, ProbeRenderer},
 };
@@ -49,14 +46,6 @@ impl ProbeRenderer for CpuProbeContext<'_> {
     fn fill_rect(&mut self, rect: &Rect) {
         self.0.fill_rect(rect);
     }
-
-    fn set_paint_transform(&mut self, paint_transform: Affine) {
-        self.0.set_paint_transform(paint_transform);
-    }
-
-    fn reset_paint_transform(&mut self) {
-        self.0.reset_paint_transform();
-    }
 }
 
 fn render_probe_pixmap() -> Pixmap {
@@ -67,10 +56,7 @@ fn render_probe_pixmap() -> Pixmap {
     };
     let mut ctx = RenderContext::new_with(width, height, settings);
 
-    probe::draw_scene(
-        &mut CpuProbeContext(&mut ctx),
-        ImageSource::Pixmap(Arc::new(probe::probe_image_pixmap())),
-    );
+    probe::draw_scene(&mut CpuProbeContext(&mut ctx));
     ctx.flush();
 
     let mut resources = Resources::new();

@@ -581,6 +581,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "images are temporarily disabled"]
     fn texture_runs() {
         let texture_a = TextureId(10);
         let texture_b = TextureId(20);
@@ -619,6 +620,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "images are temporarily disabled"]
     fn texture_runs_collapse_across_atlas_images() {
         let texture = TextureId(10);
         let encoded = [external(texture), atlas_image()];
@@ -643,6 +645,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "images are temporarily disabled"]
     fn draw_clear() {
         let texture_id = TextureId(10);
         let encoded = [external(texture_id)];

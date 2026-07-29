@@ -880,14 +880,6 @@ struct StripUniforms {
     alphas_texture: WebGlUniformLocation,
     /// Layer input texture location.
     layer_input_texture: WebGlUniformLocation,
-    /// Atlas texture location.
-    atlas_texture_array: WebGlUniformLocation,
-    /// Encoded paints texture location for fragment shader.
-    encoded_paints_texture_fs: WebGlUniformLocation,
-    /// Encoded paints texture location for vertex shader.
-    encoded_paints_texture_vs: WebGlUniformLocation,
-    /// External texture location.
-    external_texture: WebGlUniformLocation,
 }
 
 /// Contains all WebGL resources needed for rendering.
@@ -1914,10 +1906,6 @@ fn get_strip_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> StripUn
     // Get texture uniform locations.
     let alphas_texture_name = render::fragment::ALPHAS_TEXTURE;
     let layer_input_texture_name = render::fragment::LAYER_INPUT_TEXTURE;
-    let atlas_texture_array_name = render::fragment::ATLAS_TEXTURE_ARRAY;
-    let encoded_paints_texture_fs_name = render::fragment::ENCODED_PAINTS_TEXTURE;
-    let encoded_paints_texture_vs_name = render::vertex::ENCODED_PAINTS_TEXTURE;
-    let external_texture_name = render::fragment::EXTERNAL_TEXTURE;
 
     StripUniforms {
         config_vs_block_index,
@@ -1927,18 +1915,6 @@ fn get_strip_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> StripUn
             .unwrap(),
         layer_input_texture: gl
             .get_uniform_location(program, layer_input_texture_name)
-            .unwrap(),
-        atlas_texture_array: gl
-            .get_uniform_location(program, atlas_texture_array_name)
-            .unwrap(),
-        encoded_paints_texture_fs: gl
-            .get_uniform_location(program, encoded_paints_texture_fs_name)
-            .unwrap(),
-        encoded_paints_texture_vs: gl
-            .get_uniform_location(program, encoded_paints_texture_vs_name)
-            .unwrap(),
-        external_texture: gl
-            .get_uniform_location(program, external_texture_name)
             .unwrap(),
     }
 }
@@ -2442,40 +2418,6 @@ impl WebGlRendererContext<'_> {
         );
         self.gl
             .uniform1i(Some(&self.programs.strip_uniforms.layer_input_texture), 1);
-
-        // Bind atlas texture array for image rendering
-        self.gl.active_texture(WebGl2RenderingContext::TEXTURE2);
-        self.gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D_ARRAY,
-            Some(&self.programs.resources.atlas_texture_array.texture),
-        );
-        self.gl
-            .uniform1i(Some(&self.programs.strip_uniforms.atlas_texture_array), 2);
-
-        // Bind encoded paints texture for image metadata
-        self.gl.active_texture(WebGl2RenderingContext::TEXTURE3);
-        self.gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D,
-            Some(&self.programs.resources.encoded_paints_texture),
-        );
-        self.gl.uniform1i(
-            Some(&self.programs.strip_uniforms.encoded_paints_texture_fs),
-            3,
-        );
-        self.gl.uniform1i(
-            Some(&self.programs.strip_uniforms.encoded_paints_texture_vs),
-            3,
-        );
-
-        // We don't support external textures in our WebGL backend yet; instead we bind a
-        // placeholder so the shader's sampler binding is satisfied.
-        self.gl.active_texture(WebGl2RenderingContext::TEXTURE5);
-        self.gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D,
-            Some(&self.programs.resources.placeholder_external_texture),
-        );
-        self.gl
-            .uniform1i(Some(&self.programs.strip_uniforms.external_texture), 5);
 
         // TODO: Today, we only support early-z rejection on the final view. If we wanted to support
         // intermediate layers, we would require separate depth buffers for each target. We can explore

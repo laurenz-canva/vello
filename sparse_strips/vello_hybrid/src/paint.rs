@@ -3,27 +3,21 @@
 
 //! GPU paint packing for scheduled strip draws.
 
-use crate::util::pack_u16_pair;
 use vello_common::TextureId;
 use vello_common::encode::{EncodedKind, EncodedPaint};
-use vello_common::paint::{ImageSource, Paint};
+use vello_common::paint::Paint;
 
 const COLOR_SOURCE_PAYLOAD: u32 = 0;
 pub(crate) const COLOR_SOURCE_LAYER: u32 = 1;
 
-const PAINT_TYPE_SOLID: u32 = 0;
-const PAINT_TYPE_IMAGE: u32 = 1;
-
 // See the layout information in `render.wesl`.
 pub(crate) const COLOR_SOURCE_SHIFT: u32 = 29;
-const PAINT_TYPE_SHIFT: u32 = 26;
-const PAINT_TEXTURE_INDEX_MASK: u32 = (1 << PAINT_TYPE_SHIFT) - 1;
 
 /// Shader-ready paint metadata for a strip.
 #[derive(Clone, Copy)]
 pub(crate) struct PackedPaint {
     /// Value source for the strip's payload field.
-    payload: PaintPayload,
+    payload: u32,
     /// Packed paint kind, source, and data offset.
     pub(crate) paint: u32,
     /// External texture required by this paint, if any.
@@ -33,21 +27,9 @@ pub(crate) struct PackedPaint {
 }
 
 impl PackedPaint {
-    pub(crate) fn payload_at(self, x: u16, y: u16) -> u32 {
-        match self.payload {
-            PaintPayload::Solid(rgba) => rgba,
-            PaintPayload::Position => pack_u16_pair(x, y),
-        }
+    pub(crate) fn payload_at(self, _x: u16, _y: u16) -> u32 {
+        self.payload
     }
-}
-
-/// Source used to populate a strip's paint payload.
-#[derive(Clone, Copy)]
-enum PaintPayload {
-    /// Premultiplied RGBA value for a solid paint.
-    Solid(u32),
-    /// Scene-space position used to evaluate a non-solid paint.
-    Position,
 }
 
 /// Resolves recorded paints to their encoded GPU offsets.
@@ -56,14 +38,14 @@ pub(crate) struct PaintResolver<'a> {
     /// Encoded non-solid paints indexed by [`Paint`].
     encoded: &'a [EncodedPaint],
     /// GPU data offset corresponding to each encoded paint.
-    gpu_offsets: &'a [u32],
+    _gpu_offsets: &'a [u32],
 }
 
 impl<'a> PaintResolver<'a> {
     pub(crate) fn new(encoded: &'a [EncodedPaint], gpu_offsets: &'a [u32]) -> Self {
         Self {
             encoded,
-            gpu_offsets,
+            _gpu_offsets: gpu_offsets,
         }
     }
 
@@ -71,24 +53,21 @@ impl<'a> PaintResolver<'a> {
     pub(crate) fn pack(self, paint: &Paint) -> PackedPaint {
         match paint {
             Paint::Solid(color) => PackedPaint {
-                payload: PaintPayload::Solid(color.as_premul_rgba8().to_u32()),
-                paint: (COLOR_SOURCE_PAYLOAD << COLOR_SOURCE_SHIFT)
-                    | (PAINT_TYPE_SOLID << PAINT_TYPE_SHIFT),
+                payload: color.as_premul_rgba8().to_u32(),
+                paint: COLOR_SOURCE_PAYLOAD << COLOR_SOURCE_SHIFT,
                 external_texture_id: None,
                 opaque: color.is_opaque(),
             },
             Paint::Indexed(indexed_paint) => {
                 let paint_id = indexed_paint.index();
-                let gpu_offset = self.gpu_offsets[paint_id];
                 let encoded_paint = &self.encoded[paint_id];
 
-                let (paint_type, external_texture_id) = match encoded_paint {
-                    EncodedPaint::Image(encoded_image) => match &encoded_image.source {
-                        ImageSource::OpaqueId { .. } => (PAINT_TYPE_IMAGE, None),
-                        _ => unimplemented!("Unsupported image source"),
-                    },
-                    EncodedPaint::ExternalTexture(texture) => {
-                        (PAINT_TYPE_IMAGE, Some(texture.texture_id))
+                match encoded_paint {
+                    EncodedPaint::Image(_) => {
+                        unimplemented!("images are temporarily disabled")
+                    }
+                    EncodedPaint::ExternalTexture(_) => {
+                        unimplemented!("external textures are temporarily disabled")
                     }
                     EncodedPaint::Gradient(gradient) => match &gradient.kind {
                         EncodedKind::Linear(_) => {
@@ -104,15 +83,6 @@ impl<'a> PaintResolver<'a> {
                     EncodedPaint::BlurredRoundedRect(_) => {
                         unimplemented!("blurred rounded rectangles are temporarily disabled")
                     }
-                };
-
-                PackedPaint {
-                    payload: PaintPayload::Position,
-                    paint: (COLOR_SOURCE_PAYLOAD << COLOR_SOURCE_SHIFT)
-                        | (paint_type << PAINT_TYPE_SHIFT)
-                        | (gpu_offset & PAINT_TEXTURE_INDEX_MASK),
-                    external_texture_id,
-                    opaque: !encoded_paint.may_have_transparency(),
                 }
             }
         }

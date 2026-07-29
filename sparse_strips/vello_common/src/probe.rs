@@ -4,12 +4,11 @@
 //! Helpers for performing probing to verify the basic capabilities of the device we are
 //! running on.
 
-use crate::color::{AlphaColor, palette::css};
+use crate::color::palette::css;
 #[cfg(not(feature = "std"))]
 use crate::kurbo::common::FloatFuncs as _;
 use crate::kurbo::{Affine, BezPath, Circle, Rect, Shape};
-use crate::paint::{Image, ImageSource, PaintType};
-use crate::peniko::{Extend, ImageQuality, ImageSampler};
+use crate::paint::PaintType;
 use crate::pixmap::Pixmap;
 use alloc::vec::Vec;
 
@@ -21,14 +20,11 @@ const ELEMENT_MARGIN: f64 = 1.0;
 const RECT_SIZE: f64 = 10.0;
 const CIRCLE_RADIUS: f64 = 5.0;
 const CIRCLE_CENTER_OFFSET_X: f64 = 1.5;
-const IMAGE_SOURCE_SIZE: f64 = 5.0;
 const PATH_TOLERANCE: f64 = 0.1;
 
-const ELEMENTS: [ProbeElement; 5] = [
+const ELEMENTS: [ProbeElement; 3] = [
     ProbeElement::SolidRect,
     ProbeElement::AlphaBlending,
-    ProbeElement::ImageNearest,
-    ProbeElement::ImageBilinear,
     ProbeElement::Transformed,
 ];
 /// Per-channel absolute tolerance used when comparing probe pixels.
@@ -116,8 +112,6 @@ pub trait ProbeRenderer {
     fn set_paint(&mut self, paint: PaintType);
     fn fill_path(&mut self, path: &BezPath);
     fn fill_rect(&mut self, rect: &Rect);
-    fn set_paint_transform(&mut self, paint_transform: Affine);
-    fn reset_paint_transform(&mut self);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -125,8 +119,6 @@ enum ProbeElement {
     SolidRect,
     Transformed,
     AlphaBlending,
-    ImageNearest,
-    ImageBilinear,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -182,7 +174,7 @@ impl GridLayout {
 impl ProbeElement {
     fn bounds(self) -> (f64, f64) {
         let (width, height) = match self {
-            Self::SolidRect | Self::ImageNearest | Self::ImageBilinear => (RECT_SIZE, RECT_SIZE),
+            Self::SolidRect => (RECT_SIZE, RECT_SIZE),
             Self::Transformed => (
                 RECT_SIZE * core::f64::consts::SQRT_2,
                 RECT_SIZE * core::f64::consts::SQRT_2,
@@ -201,54 +193,15 @@ pub fn canvas_size() -> (u16, u16) {
     GridLayout::from_elements(&ELEMENTS).canvas_size()
 }
 
-/// Return the pixmap that is referenced when drawing images in the scene.
-pub fn probe_image_pixmap() -> Pixmap {
-    let mut pixmap = Pixmap::new(IMAGE_SOURCE_SIZE as u16, IMAGE_SOURCE_SIZE as u16);
-    for y in 0..pixmap.height() {
-        for x in 0..pixmap.width() {
-            pixmap.set_pixel(
-                x,
-                y,
-                AlphaColor::from_rgba8(255, 0, 0, 255)
-                    .premultiply()
-                    .to_rgba8(),
-            );
-        }
-    }
-    pixmap.set_may_have_transparency(false);
-    pixmap
-}
-
-fn image_paint(image: ImageSource, quality: ImageQuality) -> PaintType {
-    Image {
-        image,
-        sampler: ImageSampler {
-            x_extend: Extend::Pad,
-            y_extend: Extend::Pad,
-            quality,
-            alpha: 1.0,
-        },
-    }
-    .into()
-}
-
 /// Draw the full shared probe scene into a rendering context.
-pub fn draw_scene<T: ProbeRenderer>(ctx: &mut T, image: ImageSource) {
+pub fn draw_scene<T: ProbeRenderer>(ctx: &mut T) {
     let layout = GridLayout::from_elements(&ELEMENTS);
-    let image_nearest = image_paint(image.clone(), ImageQuality::Low);
-    let image_bilinear = image_paint(image, ImageQuality::Medium);
     ctx.set_transform(Affine::IDENTITY);
     ctx.set_paint(css::WHITE.into());
     ctx.fill_rect(&layout.canvas_rect());
 
     for (index, element) in ELEMENTS.iter().copied().enumerate() {
-        draw_probe_element(
-            ctx,
-            layout.cell_rect(index),
-            element,
-            &image_nearest,
-            &image_bilinear,
-        );
+        draw_probe_element(ctx, layout.cell_rect(index), element);
     }
 }
 
@@ -263,13 +216,7 @@ fn pixels_within_tolerance(expected: &[u8], actual: &[u8], channel_tolerance: u8
         .all(|(expected, actual)| expected.abs_diff(*actual) <= channel_tolerance)
 }
 
-fn draw_probe_element(
-    ctx: &mut impl ProbeRenderer,
-    cell: Rect,
-    element: ProbeElement,
-    image_nearest: &PaintType,
-    image_bilinear: &PaintType,
-) {
+fn draw_probe_element(ctx: &mut impl ProbeRenderer, cell: Rect, element: ProbeElement) {
     match element {
         ProbeElement::SolidRect => {
             ctx.set_paint(css::BLUE.into());
@@ -291,8 +238,6 @@ fn draw_probe_element(
                     .to_path(PATH_TOLERANCE),
             );
         }
-        ProbeElement::ImageNearest => draw_centered_padded_image(ctx, cell, image_nearest),
-        ProbeElement::ImageBilinear => draw_centered_padded_image(ctx, cell, image_bilinear),
     }
 }
 
@@ -304,18 +249,6 @@ fn centered_rect(cell: Rect, width: f64, height: f64) -> Rect {
         center.x + width * 0.5,
         center.y + height * 0.5,
     )
-}
-
-fn draw_centered_padded_image(ctx: &mut impl ProbeRenderer, cell: Rect, image_paint: &PaintType) {
-    let dst_rect = centered_rect(cell, RECT_SIZE, RECT_SIZE);
-    let image_origin = (
-        dst_rect.x0 + (RECT_SIZE - IMAGE_SOURCE_SIZE) * 0.5,
-        dst_rect.y0 + (RECT_SIZE - IMAGE_SOURCE_SIZE) * 0.5,
-    );
-    ctx.set_paint(image_paint.clone());
-    ctx.set_paint_transform(Affine::translate(image_origin));
-    ctx.fill_rect(&dst_rect);
-    ctx.reset_paint_transform();
 }
 
 fn draw_transformed_rect(ctx: &mut impl ProbeRenderer, rect: Rect) {

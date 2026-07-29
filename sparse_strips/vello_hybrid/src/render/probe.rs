@@ -1,21 +1,18 @@
 // Copyright 2026 the Vello Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use crate::render::common::IMAGE_PADDING;
 use crate::render::webgl::resource::Framebuffer;
 use crate::render::webgl::{
-    WebGlStateConfig, WebGlStateGuard, create_atlas_texture_array, create_framebuffer_for_texture,
-    create_texture,
+    WebGlStateConfig, WebGlStateGuard, create_framebuffer_for_texture, create_texture,
 };
 use crate::target::RootTarget;
 use crate::{RenderError, RenderSize, Scene, WebGlRenderer};
-use alloc::{borrow::Cow, format, sync::Arc};
+use alloc::{borrow::Cow, format};
 use core::ops::Deref;
 use thiserror::Error;
 use vello_common::image_cache::ImageCache;
 use vello_common::kurbo::{Affine, BezPath, Rect};
-use vello_common::multi_atlas::{AllocationStrategy, AtlasConfig};
-use vello_common::paint::{ImageSource, PaintType};
+use vello_common::paint::PaintType;
 use vello_common::pixmap::Pixmap;
 use vello_common::probe::Probe;
 use web_sys::{WebGl2RenderingContext, WebGlBuffer, WebGlSync};
@@ -112,47 +109,9 @@ impl WebGlRenderer {
             .unwrap();
         let probe_framebuffer = create_framebuffer_for_texture(&self.gl, &probe_texture);
 
-        let atlas_config = AtlasConfig {
-            initial_atlas_count: 1,
-            // These should be large enough for the probe scene.
-            atlas_size: (256, 256),
-            max_atlases: 1,
-            auto_grow: true,
-            allocation_strategy: AllocationStrategy::FirstFit,
-        };
-        let (atlas_width, atlas_height) = atlas_config.atlas_size;
-
-        let mut probe_image_cache = ImageCache::new_with_config(atlas_config);
-        let mut probe_atlas_texture_array =
-            create_atlas_texture_array(&self.gl, atlas_width, atlas_height, 1);
-        let mut probe_atlas_size = (atlas_width, atlas_height);
-        let mut probe_atlas_layer_count = 1;
-        core::mem::swap(
-            &mut self.programs.resources.atlas_texture_array,
-            &mut probe_atlas_texture_array,
-        );
-        core::mem::swap(
-            &mut self.programs.resources.atlas_size,
-            &mut probe_atlas_size,
-        );
-        core::mem::swap(
-            &mut self.programs.resources.atlas_layer_count,
-            &mut probe_atlas_layer_count,
-        );
-
-        let probe_image = Arc::new(vello_common::probe::probe_image_pixmap());
-        // Note: No need to destroy the image explicitly in the end, because we discard the image
-        // cache anyway.
-        let probe_image_id =
-            self.upload_image_with(&mut probe_image_cache, &probe_image, IMAGE_PADDING);
+        let probe_image_cache = ImageCache::new_dummy();
         let mut scene = Scene::new(width, height);
-        vello_common::probe::draw_scene(
-            &mut scene,
-            ImageSource::opaque_id_with_transparency_hint(
-                probe_image_id,
-                probe_image.may_have_transparency(),
-            ),
-        );
+        vello_common::probe::draw_scene(&mut scene);
 
         let previous_view_framebuffer = self
             .programs
@@ -174,21 +133,6 @@ impl WebGlRenderer {
             .expect("probe framebuffer must be restored after rendering");
         self.programs.resources.view_framebuffer_override = previous_view_framebuffer;
 
-        core::mem::swap(
-            &mut self.programs.resources.atlas_texture_array,
-            &mut probe_atlas_texture_array,
-        );
-        core::mem::swap(
-            &mut self.programs.resources.atlas_size,
-            &mut probe_atlas_size,
-        );
-        core::mem::swap(
-            &mut self.programs.resources.atlas_layer_count,
-            &mut probe_atlas_layer_count,
-        );
-
-        // We do this here instead of above such that in case the render result is not
-        // valid, we still properly restore the state (e.g. the old atlas texture array).
         render_result?;
 
         let pending = launch_probe(&self.gl, &probe_framebuffer, width, height);
@@ -346,13 +290,5 @@ impl vello_common::probe::ProbeRenderer for Scene {
 
     fn fill_rect(&mut self, rect: &Rect) {
         Self::fill_rect(self, rect);
-    }
-
-    fn set_paint_transform(&mut self, paint_transform: Affine) {
-        Self::set_paint_transform(self, paint_transform);
-    }
-
-    fn reset_paint_transform(&mut self) {
-        Self::reset_paint_transform(self);
     }
 }
