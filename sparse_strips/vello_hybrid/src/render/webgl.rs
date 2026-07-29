@@ -886,8 +886,6 @@ struct StripUniforms {
     encoded_paints_texture_fs: WebGlUniformLocation,
     /// Encoded paints texture location for vertex shader.
     encoded_paints_texture_vs: WebGlUniformLocation,
-    /// Gradient texture location.
-    gradient_texture: WebGlUniformLocation,
     /// External texture location.
     external_texture: WebGlUniformLocation,
 }
@@ -1919,7 +1917,6 @@ fn get_strip_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> StripUn
     let atlas_texture_array_name = render::fragment::ATLAS_TEXTURE_ARRAY;
     let encoded_paints_texture_fs_name = render::fragment::ENCODED_PAINTS_TEXTURE;
     let encoded_paints_texture_vs_name = render::vertex::ENCODED_PAINTS_TEXTURE;
-    let gradient_texture_name = render::fragment::GRADIENT_TEXTURE;
     let external_texture_name = render::fragment::EXTERNAL_TEXTURE;
 
     StripUniforms {
@@ -1939,9 +1936,6 @@ fn get_strip_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> StripUn
             .unwrap(),
         encoded_paints_texture_vs: gl
             .get_uniform_location(program, encoded_paints_texture_vs_name)
-            .unwrap(),
-        gradient_texture: gl
-            .get_uniform_location(program, gradient_texture_name)
             .unwrap(),
         external_texture: gl
             .get_uniform_location(program, external_texture_name)
@@ -2472,15 +2466,6 @@ impl WebGlRendererContext<'_> {
             Some(&self.programs.strip_uniforms.encoded_paints_texture_vs),
             3,
         );
-
-        // Bind gradient texture for gradient rendering
-        self.gl.active_texture(WebGl2RenderingContext::TEXTURE4);
-        self.gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D,
-            Some(&self.programs.resources.gradient_texture),
-        );
-        self.gl
-            .uniform1i(Some(&self.programs.strip_uniforms.gradient_texture), 4);
 
         // We don't support external textures in our WebGL backend yet; instead we bind a
         // placeholder so the shader's sampler binding is satisfied.

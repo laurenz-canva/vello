@@ -13,10 +13,6 @@ pub(crate) const COLOR_SOURCE_LAYER: u32 = 1;
 
 const PAINT_TYPE_SOLID: u32 = 0;
 const PAINT_TYPE_IMAGE: u32 = 1;
-const PAINT_TYPE_LINEAR_GRADIENT: u32 = 2;
-const PAINT_TYPE_RADIAL_GRADIENT: u32 = 3;
-const PAINT_TYPE_SWEEP_GRADIENT: u32 = 4;
-const PAINT_TYPE_BLURRED_ROUNDED_RECT: u32 = 5;
 
 // See the layout information in `render.wesl`.
 pub(crate) const COLOR_SOURCE_SHIFT: u32 = 29;
@@ -94,15 +90,20 @@ impl<'a> PaintResolver<'a> {
                     EncodedPaint::ExternalTexture(texture) => {
                         (PAINT_TYPE_IMAGE, Some(texture.texture_id))
                     }
-                    EncodedPaint::Gradient(gradient) => {
-                        let paint_type = match &gradient.kind {
-                            EncodedKind::Linear(_) => PAINT_TYPE_LINEAR_GRADIENT,
-                            EncodedKind::Radial(_) => PAINT_TYPE_RADIAL_GRADIENT,
-                            EncodedKind::Sweep(_) => PAINT_TYPE_SWEEP_GRADIENT,
-                        };
-                        (paint_type, None)
+                    EncodedPaint::Gradient(gradient) => match &gradient.kind {
+                        EncodedKind::Linear(_) => {
+                            unimplemented!("linear gradients are temporarily disabled")
+                        }
+                        EncodedKind::Radial(_) => {
+                            unimplemented!("radial gradients are temporarily disabled")
+                        }
+                        EncodedKind::Sweep(_) => {
+                            unimplemented!("sweep gradients are temporarily disabled")
+                        }
+                    },
+                    EncodedPaint::BlurredRoundedRect(_) => {
+                        unimplemented!("blurred rounded rectangles are temporarily disabled")
                     }
-                    EncodedPaint::BlurredRoundedRect(_) => (PAINT_TYPE_BLURRED_ROUNDED_RECT, None),
                 };
 
                 PackedPaint {

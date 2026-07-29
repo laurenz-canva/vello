@@ -7,11 +7,9 @@
 use crate::color::{AlphaColor, palette::css};
 #[cfg(not(feature = "std"))]
 use crate::kurbo::common::FloatFuncs as _;
-use crate::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape};
+use crate::kurbo::{Affine, BezPath, Circle, Rect, Shape};
 use crate::paint::{Image, ImageSource, PaintType};
-use crate::peniko::{
-    ColorStop, ColorStops, Extend, Gradient, ImageQuality, ImageSampler, LinearGradientPosition,
-};
+use crate::peniko::{Extend, ImageQuality, ImageSampler};
 use crate::pixmap::Pixmap;
 use alloc::vec::Vec;
 
@@ -26,10 +24,9 @@ const CIRCLE_CENTER_OFFSET_X: f64 = 1.5;
 const IMAGE_SOURCE_SIZE: f64 = 5.0;
 const PATH_TOLERANCE: f64 = 0.1;
 
-const ELEMENTS: [ProbeElement; 6] = [
+const ELEMENTS: [ProbeElement; 5] = [
     ProbeElement::SolidRect,
     ProbeElement::AlphaBlending,
-    ProbeElement::Gradient,
     ProbeElement::ImageNearest,
     ProbeElement::ImageBilinear,
     ProbeElement::Transformed,
@@ -128,7 +125,6 @@ enum ProbeElement {
     SolidRect,
     Transformed,
     AlphaBlending,
-    Gradient,
     ImageNearest,
     ImageBilinear,
 }
@@ -186,9 +182,7 @@ impl GridLayout {
 impl ProbeElement {
     fn bounds(self) -> (f64, f64) {
         let (width, height) = match self {
-            Self::SolidRect | Self::Gradient | Self::ImageNearest | Self::ImageBilinear => {
-                (RECT_SIZE, RECT_SIZE)
-            }
+            Self::SolidRect | Self::ImageNearest | Self::ImageBilinear => (RECT_SIZE, RECT_SIZE),
             Self::Transformed => (
                 RECT_SIZE * core::f64::consts::SQRT_2,
                 RECT_SIZE * core::f64::consts::SQRT_2,
@@ -297,11 +291,6 @@ fn draw_probe_element(
                     .to_path(PATH_TOLERANCE),
             );
         }
-        ProbeElement::Gradient => {
-            let rect = centered_rect(cell, RECT_SIZE, RECT_SIZE);
-            ctx.set_paint(linear_gradient(&rect).into());
-            ctx.fill_rect(&rect);
-        }
         ProbeElement::ImageNearest => draw_centered_padded_image(ctx, cell, image_nearest),
         ProbeElement::ImageBilinear => draw_centered_padded_image(ctx, cell, image_bilinear),
     }
@@ -339,23 +328,4 @@ fn draw_transformed_rect(ctx: &mut impl ProbeRenderer, rect: Rect) {
     ctx.set_paint(css::BLUE.into());
     ctx.fill_rect(&rect);
     ctx.set_transform(Affine::IDENTITY);
-}
-
-fn linear_gradient(rect: &Rect) -> Gradient {
-    Gradient {
-        kind: LinearGradientPosition {
-            start: Point::new(rect.x0, rect.y0),
-            end: Point::new(rect.x1, rect.y0),
-        }
-        .into(),
-        stops: ColorStops::from(
-            [
-                ColorStop::from((0.0, css::BLUE)),
-                ColorStop::from((1.0, css::RED)),
-            ]
-            .as_slice(),
-        ),
-        extend: Extend::Pad,
-        ..Default::default()
-    }
 }
