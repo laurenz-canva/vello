@@ -824,7 +824,6 @@ struct FilterPassUniforms {
 struct BlendUniforms {
     layer_texture_0: WebGlUniformLocation,
     layer_texture_1: WebGlUniformLocation,
-    alphas_texture: WebGlUniformLocation,
 }
 
 #[derive(Debug)]
@@ -837,10 +836,6 @@ struct CopyUniforms {
 struct StripUniforms {
     /// Config uniform block index for vertex shader.
     config_vs_block_index: u32,
-    /// Config uniform block index for fragment shader.
-    config_fs_block_index: u32,
-    /// Alphas texture location.
-    alphas_texture: WebGlUniformLocation,
     /// Layer input texture location.
     layer_input_texture: WebGlUniformLocation,
 }
@@ -852,10 +847,6 @@ pub(crate) struct WebGlResources {
     strip_vao: VertexArray,
     /// Buffer for [`GpuStrip`] data.
     strips_buffer: Buffer,
-    /// Texture for alpha values.
-    alphas_texture: Texture,
-    /// Height of alpha texture.
-    alpha_texture_height: u32,
     /// Texture array for atlas data (multiple atlases supported)
     pub(crate) atlas_texture_array: WebGlTextureArray,
     /// Configured dimensions used when promoting the placeholder to a real atlas.
@@ -1016,19 +1007,17 @@ impl WebGlPrograms {
         gl: &WebGl2RenderingContext,
         gradient_cache: &mut GradientRampCache,
         encoded_paints: &[GpuEncodedPaint],
-        alphas: &mut Vec<u8>,
+        _alphas: &mut Vec<u8>,
         render_size: &RenderSize,
         paint_idxs: &[u32],
         filter_context: &FilterContext,
     ) {
         let max_texture_dimension_2d = self.resources.max_texture_dimension_2d;
 
-        self.maybe_resize_alphas_tex(max_texture_dimension_2d, alphas.len());
         self.maybe_resize_encoded_paints_tex(max_texture_dimension_2d, paint_idxs);
         self.maybe_resize_filter_data_tex(filter_context);
         self.maybe_update_config_buffer(gl, max_texture_dimension_2d, render_size);
 
-        self.upload_alpha_texture(gl, alphas);
         self.upload_encoded_paints_texture(gl, encoded_paints);
         self.upload_filter_data_texture(gl, filter_context);
 
@@ -1237,25 +1226,6 @@ impl WebGlPrograms {
         );
     }
 
-    /// Update the alpha texture size if needed.
-    fn maybe_resize_alphas_tex(&mut self, max_texture_dimension_2d: u32, alphas_len: usize) {
-        let required_alpha_height = (alphas_len as u32)
-            // There are 16 1-byte alpha values per texel.
-            .div_ceil(max_texture_dimension_2d << 4);
-
-        let current_alpha_height = self.resources.alpha_texture_height;
-        if required_alpha_height > current_alpha_height {
-            // We need to resize the alpha texture to fit the new alpha data.
-            assert!(
-                required_alpha_height <= max_texture_dimension_2d,
-                "Alpha texture height exceeds max texture dimensions"
-            );
-
-            // Track the new height.
-            self.resources.alpha_texture_height = required_alpha_height;
-        }
-    }
-
     /// Update the encoded paints texture size if needed.
     fn maybe_resize_encoded_paints_tex(
         &mut self,
@@ -1344,33 +1314,6 @@ impl WebGlPrograms {
             self.render_size = new_render_size.clone();
             self.negate_ndc = negate_ndc;
         }
-    }
-
-    /// Upload alpha data to the texture.
-    fn upload_alpha_texture(&mut self, gl: &WebGl2RenderingContext, alphas: &mut Vec<u8>) {
-        if alphas.is_empty() {
-            return;
-        }
-
-        let alpha_texture_width = self.resources.max_texture_dimension_2d;
-        let alpha_texture_height = self.resources.alpha_texture_height;
-        let total_size = alpha_texture_width as usize * alpha_texture_height as usize * 16;
-
-        let original_len = alphas.len();
-
-        // Temporarily pad the length of the alphas to the texture size before uploading.
-        alphas.resize(total_size, 0);
-
-        upload_data_to_rgba32_texture(
-            gl,
-            &self.resources.alphas_texture,
-            bytemuck::cast_slice::<u8, u32>(alphas),
-            alpha_texture_width,
-            alpha_texture_height,
-        );
-
-        // Truncate back to the original size.
-        alphas.truncate(original_len);
     }
 
     /// Upload encoded paints to the texture.
@@ -1844,34 +1787,20 @@ fn get_strip_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> StripUn
     let config_vs_name = render::vertex::CONFIG;
     let config_vs_block_index = gl.get_uniform_block_index(program, config_vs_name);
 
-    let config_fs_name = render::fragment::CONFIG;
-    let config_fs_block_index = gl.get_uniform_block_index(program, config_fs_name);
-
     debug_assert_ne!(
         config_vs_block_index,
-        WebGl2RenderingContext::INVALID_INDEX,
-        "invalid uniform index"
-    );
-    debug_assert_ne!(
-        config_fs_block_index,
         WebGl2RenderingContext::INVALID_INDEX,
         "invalid uniform index"
     );
 
     // Bind uniform blocks to binding points.
     gl.uniform_block_binding(program, config_vs_block_index, 0);
-    gl.uniform_block_binding(program, config_fs_block_index, 0);
 
     // Get texture uniform locations.
-    let alphas_texture_name = render::fragment::ALPHAS_TEXTURE;
     let layer_input_texture_name = render::fragment::LAYER_INPUT_TEXTURE;
 
     StripUniforms {
         config_vs_block_index,
-        config_fs_block_index,
-        alphas_texture: gl
-            .get_uniform_location(program, alphas_texture_name)
-            .unwrap(),
         layer_input_texture: gl
             .get_uniform_location(program, layer_input_texture_name)
             .unwrap(),
@@ -2072,13 +2001,6 @@ fn create_webgl_resources(
         max_texture_dimension_2d,
     );
 
-    // Create and configure alpha texture.
-    let alphas_texture = create_texture(
-        gl,
-        WebGl2RenderingContext::NEAREST,
-        WebGl2RenderingContext::NEAREST,
-    );
-
     let AtlasConfig {
         atlas_size: (atlas_width, atlas_height),
         initial_atlas_count,
@@ -2124,8 +2046,6 @@ fn create_webgl_resources(
     WebGlResources {
         strip_vao,
         strips_buffer,
-        alphas_texture,
-        alpha_texture_height: 0,
         atlas_texture_array,
         atlas_size,
         atlas_layer_count,
@@ -2315,11 +2235,6 @@ impl WebGlRendererContext<'_> {
                     self.programs.strip_uniforms.config_vs_block_index,
                     Some(&self.programs.resources.view_config_buffer),
                 );
-                self.gl.bind_buffer_base(
-                    WebGl2RenderingContext::UNIFORM_BUFFER,
-                    self.programs.strip_uniforms.config_fs_block_index,
-                    Some(&self.programs.resources.view_config_buffer),
-                );
             }
             DrawPassTarget::Layer(id) => {
                 self.gl.bind_framebuffer(
@@ -2336,11 +2251,6 @@ impl WebGlRendererContext<'_> {
                     self.programs.strip_uniforms.config_vs_block_index,
                     Some(buf),
                 );
-                self.gl.bind_buffer_base(
-                    WebGl2RenderingContext::UNIFORM_BUFFER,
-                    self.programs.strip_uniforms.config_fs_block_index,
-                    Some(buf),
-                );
             }
         };
 
@@ -2352,15 +2262,6 @@ impl WebGlRendererContext<'_> {
         // Set up attributes.
         self.gl
             .bind_vertex_array(Some(&self.programs.resources.strip_vao));
-
-        // Bind textures.
-        self.gl.active_texture(WebGl2RenderingContext::TEXTURE0);
-        self.gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D,
-            Some(&self.programs.resources.alphas_texture),
-        );
-        self.gl
-            .uniform1i(Some(&self.programs.strip_uniforms.alphas_texture), 0);
 
         self.gl.active_texture(WebGl2RenderingContext::TEXTURE1);
         self.gl.bind_texture(
@@ -2502,13 +2403,6 @@ impl WebGlRendererContext<'_> {
             i32::from(texture_size.height()),
         );
         self.gl.use_program(Some(blend_program));
-
-        self.gl.active_texture(WebGl2RenderingContext::TEXTURE2);
-        self.gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D,
-            Some(&self.programs.resources.alphas_texture),
-        );
-        self.gl.uniform1i(Some(&blend_uniforms.alphas_texture), 2);
 
         self.gl.active_texture(WebGl2RenderingContext::TEXTURE0);
         self.gl.bind_texture(

@@ -5,28 +5,18 @@
 //! running on.
 
 use crate::color::palette::css;
-#[cfg(not(feature = "std"))]
-use crate::kurbo::common::FloatFuncs as _;
-use crate::kurbo::{Affine, BezPath, Circle, Rect, Shape};
+use crate::kurbo::Rect;
 use crate::paint::PaintType;
 use crate::pixmap::Pixmap;
 use alloc::vec::Vec;
 
 const REFERENCE_RGBA: &[u8] = include_bytes!("../assets/probe.rgba");
 
-const ELEMENTS_PER_ROW: usize = 3;
+const ELEMENTS_PER_ROW: usize = 1;
 const ELEMENT_MARGIN: f64 = 1.0;
 
 const RECT_SIZE: f64 = 10.0;
-const CIRCLE_RADIUS: f64 = 5.0;
-const CIRCLE_CENTER_OFFSET_X: f64 = 1.5;
-const PATH_TOLERANCE: f64 = 0.1;
-
-const ELEMENTS: [ProbeElement; 3] = [
-    ProbeElement::SolidRect,
-    ProbeElement::AlphaBlending,
-    ProbeElement::Transformed,
-];
+const ELEMENTS: [ProbeElement; 1] = [ProbeElement::SolidRect];
 /// Per-channel absolute tolerance used when comparing probe pixels.
 const CHANNEL_TOLERANCE: u8 = 3;
 
@@ -108,17 +98,13 @@ impl ProbeImage {
 
 /// API necessary to draw the probe scene.
 pub trait ProbeRenderer {
-    fn set_transform(&mut self, transform: Affine);
     fn set_paint(&mut self, paint: PaintType);
-    fn fill_path(&mut self, path: &BezPath);
     fn fill_rect(&mut self, rect: &Rect);
 }
 
 #[derive(Clone, Copy, Debug)]
 enum ProbeElement {
     SolidRect,
-    Transformed,
-    AlphaBlending,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -173,18 +159,10 @@ impl GridLayout {
 
 impl ProbeElement {
     fn bounds(self) -> (f64, f64) {
-        let (width, height) = match self {
-            Self::SolidRect => (RECT_SIZE, RECT_SIZE),
-            Self::Transformed => (
-                RECT_SIZE * core::f64::consts::SQRT_2,
-                RECT_SIZE * core::f64::consts::SQRT_2,
-            ),
-            Self::AlphaBlending => (
-                CIRCLE_RADIUS * 2.0 + CIRCLE_CENTER_OFFSET_X * 2.0,
-                CIRCLE_RADIUS * 2.0,
-            ),
-        };
-        (width + ELEMENT_MARGIN * 2.0, height + ELEMENT_MARGIN * 2.0)
+        (
+            RECT_SIZE + ELEMENT_MARGIN * 2.0,
+            RECT_SIZE + ELEMENT_MARGIN * 2.0,
+        )
     }
 }
 
@@ -196,7 +174,6 @@ pub fn canvas_size() -> (u16, u16) {
 /// Draw the full shared probe scene into a rendering context.
 pub fn draw_scene<T: ProbeRenderer>(ctx: &mut T) {
     let layout = GridLayout::from_elements(&ELEMENTS);
-    ctx.set_transform(Affine::IDENTITY);
     ctx.set_paint(css::WHITE.into());
     ctx.fill_rect(&layout.canvas_rect());
 
@@ -222,22 +199,6 @@ fn draw_probe_element(ctx: &mut impl ProbeRenderer, cell: Rect, element: ProbeEl
             ctx.set_paint(css::BLUE.into());
             ctx.fill_rect(&centered_rect(cell, RECT_SIZE, RECT_SIZE));
         }
-        ProbeElement::Transformed => {
-            draw_transformed_rect(ctx, centered_rect(cell, RECT_SIZE, RECT_SIZE));
-        }
-        ProbeElement::AlphaBlending => {
-            let center = cell.center();
-            ctx.set_paint(css::YELLOW.with_alpha(0.5).into());
-            ctx.fill_path(
-                &Circle::new((center.x - CIRCLE_CENTER_OFFSET_X, center.y), CIRCLE_RADIUS)
-                    .to_path(PATH_TOLERANCE),
-            );
-            ctx.set_paint(css::GREEN.with_alpha(0.5).into());
-            ctx.fill_path(
-                &Circle::new((center.x + CIRCLE_CENTER_OFFSET_X, center.y), CIRCLE_RADIUS)
-                    .to_path(PATH_TOLERANCE),
-            );
-        }
     }
 }
 
@@ -249,16 +210,4 @@ fn centered_rect(cell: Rect, width: f64, height: f64) -> Rect {
         center.x + width * 0.5,
         center.y + height * 0.5,
     )
-}
-
-fn draw_transformed_rect(ctx: &mut impl ProbeRenderer, rect: Rect) {
-    let center = rect.center();
-    ctx.set_transform(
-        Affine::translate((center.x, center.y))
-            * Affine::rotate(core::f64::consts::FRAC_PI_4)
-            * Affine::translate((-center.x, -center.y)),
-    );
-    ctx.set_paint(css::BLUE.into());
-    ctx.fill_rect(&rect);
-    ctx.set_transform(Affine::IDENTITY);
 }

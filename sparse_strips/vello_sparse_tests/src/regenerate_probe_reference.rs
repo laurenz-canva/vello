@@ -9,7 +9,7 @@ use std::{path::PathBuf, sync::LazyLock};
 #[cfg(not(target_arch = "wasm32"))]
 use oxipng::Options;
 use vello_common::{
-    kurbo::{Affine, BezPath, Rect},
+    kurbo::Rect,
     paint::PaintType,
     pixmap::Pixmap,
     probe::{self, ProbeRenderer},
@@ -31,16 +31,8 @@ struct ProbeReferenceData {
 struct CpuProbeContext<'a>(&'a mut RenderContext);
 
 impl ProbeRenderer for CpuProbeContext<'_> {
-    fn set_transform(&mut self, transform: Affine) {
-        self.0.set_transform(transform);
-    }
-
     fn set_paint(&mut self, paint: PaintType) {
         self.0.set_paint(paint);
-    }
-
-    fn fill_path(&mut self, path: &BezPath) {
-        self.0.fill_path(path);
     }
 
     fn fill_rect(&mut self, rect: &Rect) {

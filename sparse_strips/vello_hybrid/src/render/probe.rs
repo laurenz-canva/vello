@@ -11,7 +11,7 @@ use alloc::{borrow::Cow, format};
 use core::ops::Deref;
 use thiserror::Error;
 use vello_common::image_cache::ImageCache;
-use vello_common::kurbo::{Affine, BezPath, Rect};
+use vello_common::kurbo::Rect;
 use vello_common::paint::PaintType;
 use vello_common::pixmap::Pixmap;
 use vello_common::probe::Probe;
@@ -276,16 +276,8 @@ fn launch_probe(
 }
 
 impl vello_common::probe::ProbeRenderer for Scene {
-    fn set_transform(&mut self, transform: Affine) {
-        Self::set_transform(self, transform);
-    }
-
     fn set_paint(&mut self, paint: PaintType) {
         Self::set_paint(self, paint);
-    }
-
-    fn fill_path(&mut self, path: &BezPath) {
-        Self::fill_path(self, path);
     }
 
     fn fill_rect(&mut self, rect: &Rect) {
