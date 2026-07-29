@@ -16,9 +16,7 @@ void main() {
     vec2(-1.0,  3.0)
   );
   is_rect = (paint_and_rect_flag & 0x80000000u) != 0u ? 1u : 0u;
-  vec2 position = positions[gl_VertexID];
-  position.x = position.x * 0.25 + float(gl_InstanceID) - 0.75;
-  gl_Position = vec4(position, 0.0, 1.0);
+  gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
 }
 `;
 
