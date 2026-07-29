@@ -836,8 +836,6 @@ struct CopyUniforms {
 struct StripUniforms {
     /// Config uniform block index for vertex shader.
     config_vs_block_index: u32,
-    /// Layer input texture location.
-    layer_input_texture: WebGlUniformLocation,
 }
 
 /// Contains all WebGL resources needed for rendering.
@@ -1796,14 +1794,8 @@ fn get_strip_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> StripUn
     // Bind uniform blocks to binding points.
     gl.uniform_block_binding(program, config_vs_block_index, 0);
 
-    // Get texture uniform locations.
-    let layer_input_texture_name = render::fragment::LAYER_INPUT_TEXTURE;
-
     StripUniforms {
         config_vs_block_index,
-        layer_input_texture: gl
-            .get_uniform_location(program, layer_input_texture_name)
-            .unwrap(),
     }
 }
 
@@ -2262,17 +2254,6 @@ impl WebGlRendererContext<'_> {
         // Set up attributes.
         self.gl
             .bind_vertex_array(Some(&self.programs.resources.strip_vao));
-
-        self.gl.active_texture(WebGl2RenderingContext::TEXTURE1);
-        self.gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D,
-            Some(child_layer_texture.map_or_else(
-                || &self.programs.resources.placeholder_external_texture,
-                |id| self.programs.resources.layer_texture(id),
-            )),
-        );
-        self.gl
-            .uniform1i(Some(&self.programs.strip_uniforms.layer_input_texture), 1);
 
         let enable_opaque = target.enable_opaque();
 

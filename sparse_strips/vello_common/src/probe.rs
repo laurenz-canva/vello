@@ -174,7 +174,7 @@ pub fn canvas_size() -> (u16, u16) {
 /// Draw the full shared probe scene into a rendering context.
 pub fn draw_scene<T: ProbeRenderer>(ctx: &mut T) {
     let layout = GridLayout::from_elements(&ELEMENTS);
-    ctx.set_paint(css::WHITE.into());
+    ctx.set_paint(css::RED.into());
     ctx.fill_rect(&layout.canvas_rect());
 
     for (index, element) in ELEMENTS.iter().copied().enumerate() {
@@ -196,7 +196,7 @@ fn pixels_within_tolerance(expected: &[u8], actual: &[u8], channel_tolerance: u8
 fn draw_probe_element(ctx: &mut impl ProbeRenderer, cell: Rect, element: ProbeElement) {
     match element {
         ProbeElement::SolidRect => {
-            ctx.set_paint(css::BLUE.into());
+            ctx.set_paint(css::RED.into());
             ctx.fill_rect(&centered_rect(cell, RECT_SIZE, RECT_SIZE));
         }
     }
