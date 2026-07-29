@@ -153,19 +153,7 @@ impl WebGlRenderer {
         // context.
         let context_options = js_sys::Object::new();
         js_sys::Reflect::set(&context_options, &"antialias".into(), &JsValue::FALSE).unwrap();
-        // Vello only supports 24+ bit depth buffers. If the hardware falls back to a 16 bit depth buffer,
-        // correctness issues will arise. For all intents and purposes, a device manufactured in the past 10 years
-        // should support 24+ bit depth buffers (certainly those within the realm of what we consider "supported" devices)
-        // but:
-        //
-        // Relevant code for default depth buffer behaviour can be found here:
-        // - Chromium defaults to 24 bit with no fallback: https://github.com/chromium/chromium/blob/86bafb3aab8e999690d310b201d0b5489f512b08/third_party/blink/renderer/platform/graphics/gpu/drawing_buffer.cc#L1376-L1400
-        // - Firefox defaults to 24 bit with no fallback: https://github.com/mozilla/gecko-dev/blob/5836a062726f715fda621338a17b51aff30d0a8c/gfx/gl/MozFramebuffer.cpp#L155-L161
-        // - Safari defaults to 24 bit _with 16 bit_ fallback: https://github.com/WebKit/WebKit/blob/a6d6c154bbee0643f5ad1e55c071558c0df9aef7/Source/WebCore/platform/graphics/angle/GraphicsContextGLANGLE.cpp#L393-L416
-        //
-        // TODO: The above understanding is encoded in a below assertion, but this should be encapsulated within a
-        // "this device can run Vello correctly" check function.
-        js_sys::Reflect::set(&context_options, &"depth".into(), &JsValue::TRUE).unwrap();
+        js_sys::Reflect::set(&context_options, &"depth".into(), &JsValue::FALSE).unwrap();
 
         let gl = canvas
             .get_context_with_context_options("webgl2", &context_options)
@@ -214,14 +202,6 @@ impl WebGlRenderer {
             max_texture_array_layers: get_max_texture_array_layers(&gl),
         };
         settings.memory_settings.normalize(&device_limits);
-        assert!(
-            gl.get_parameter(WebGl2RenderingContext::DEPTH_BITS)
-                .unwrap()
-                .as_f64()
-                .unwrap()
-                >= 24.0,
-            "Depth buffer must be at least 24 bits"
-        );
         let image_cache = ImageCache::new_with_config(settings.memory_settings.image_atlas_config);
         let max_texture_dimension_2d = device_limits.max_texture_dimension_2d;
 
@@ -462,7 +442,6 @@ impl WebGlRenderer {
         if clear {
             self.programs.clear_view_framebuffer(&self.gl);
         }
-        self.programs.resources.depth_cleared_this_frame = false;
         let mut ctx = WebGlRendererContext {
             programs: &mut self.programs,
             gl: &self.gl,
@@ -474,22 +453,6 @@ impl WebGlRenderer {
             schedule,
             root_output_target,
         );
-
-        // See: https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices#use_invalidateframebuffer
-        // We want to indicate to the GPU driver that we won't read the depth buffer again
-        // until the next clear. This enables the GPU to avoid storing depth tiles back to VRAM.
-        if self.programs.resources.depth_cleared_this_frame {
-            self.gl.bind_framebuffer(
-                WebGl2RenderingContext::FRAMEBUFFER,
-                self.programs.resources.view_framebuffer_override.as_deref(),
-            );
-            self.gl
-                .invalidate_framebuffer(
-                    WebGl2RenderingContext::FRAMEBUFFER,
-                    &self.programs.resources.depth_attachment_array,
-                )
-                .unwrap();
-        }
 
         self.gradient_cache.maintain();
 
@@ -914,10 +877,6 @@ pub(crate) struct WebGlResources {
     view_config_buffer: Buffer,
 
     pub(crate) view_framebuffer_override: Option<Framebuffer>,
-    /// Whether the depth buffer has been cleared this frame.
-    depth_cleared_this_frame: bool,
-    /// Pre-allocated JS array for `invalidateFramebuffer` calls.
-    depth_attachment_array: js_sys::Array,
 
     /// Cached result from querying `WebGl2RenderingContext::MAX_TEXTURE_SIZE` which is a blocking
     /// WebGL call.
@@ -2177,11 +2136,6 @@ fn create_webgl_resources(
         gradient_texture_height: 0,
         view_config_buffer,
         view_framebuffer_override: None,
-        depth_cleared_this_frame: false,
-        // Note: we use DEPTH (not DEPTH_ATTACHMENT) because we render to the default
-        // framebuffer. If we ever support non-default framebuffers, this must change
-        // to DEPTH_ATTACHMENT.
-        depth_attachment_array: js_sys::Array::of1(&WebGl2RenderingContext::DEPTH.into()),
         max_texture_dimension_2d,
         texture_size,
         stub_atlas_texture_array,
@@ -2419,9 +2373,6 @@ impl WebGlRendererContext<'_> {
         self.gl
             .uniform1i(Some(&self.programs.strip_uniforms.layer_input_texture), 1);
 
-        // TODO: Today, we only support early-z rejection on the final view. If we wanted to support
-        // intermediate layers, we would require separate depth buffers for each target. We can explore
-        // that possibility in the future.
         let enable_opaque = target.enable_opaque();
 
         self.programs
@@ -2429,20 +2380,11 @@ impl WebGlRendererContext<'_> {
         let opaque_count = opaque_count as i32;
         let alpha_count = alpha_count as i32;
 
+        self.gl.disable(WebGl2RenderingContext::DEPTH_TEST);
+
         if enable_opaque {
-            self.gl.enable(WebGl2RenderingContext::DEPTH_TEST);
-            self.gl.depth_func(WebGl2RenderingContext::LEQUAL);
-
-            // Clear depth buffer on first use per frame.
-            if !self.programs.resources.depth_cleared_this_frame {
-                self.programs.resources.depth_cleared_this_frame = true;
-                self.gl.clear_depth(1.0);
-                self.gl.clear(WebGl2RenderingContext::DEPTH_BUFFER_BIT);
-            }
-
-            // Opaque pass: front-to-back, depth test ON, depth write ON, blend OFF.
+            // Opaque pass: front-to-back, blend off.
             if opaque_count > 0 {
-                self.gl.depth_mask(true);
                 self.gl.disable(WebGl2RenderingContext::BLEND);
                 self.gl.draw_arrays_instanced(
                     WebGl2RenderingContext::TRIANGLE_STRIP,
@@ -2452,7 +2394,7 @@ impl WebGlRendererContext<'_> {
                 );
             }
 
-            // Alpha pass: back-to-front, depth test ON, depth write OFF, blend ON.
+            // Alpha pass: back-to-front, blend on.
             if alpha_count > 0 {
                 // Rebind attribute pointers with offset to start at the alpha portion
                 // of the buffer.
@@ -2467,7 +2409,6 @@ impl WebGlRendererContext<'_> {
                     );
                 }
 
-                self.gl.depth_mask(false);
                 self.gl.enable(WebGl2RenderingContext::BLEND);
                 self.gl.draw_arrays_instanced(
                     WebGl2RenderingContext::TRIANGLE_STRIP,
@@ -2488,12 +2429,9 @@ impl WebGlRendererContext<'_> {
                 }
             }
 
-            // Restore state.
-            self.gl.disable(WebGl2RenderingContext::DEPTH_TEST);
-            self.gl.depth_mask(true);
             self.gl.enable(WebGl2RenderingContext::BLEND);
         } else {
-            // Intermediate target: single draw with blending, no depth.
+            // Intermediate target: single draw with blending.
             self.gl.draw_arrays_instanced(
                 WebGl2RenderingContext::TRIANGLE_STRIP,
                 0,
