@@ -57,7 +57,7 @@
 precision highp int;
 
 layout(location = 0) in uint paint_and_rect_flag;
-flat out uint paint_and_rect_flag_out;
+flat out uint is_rect;
 
 void main() {
     vec2 positions[3] = vec2[3](
@@ -65,7 +65,7 @@ void main() {
         vec2( 3.0, -1.0),
         vec2(-1.0,  3.0)
     );
-    paint_and_rect_flag_out = paint_and_rect_flag;
+    is_rect = (paint_and_rect_flag & 0x80000000u) != 0u ? 1u : 0u;
     gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
 }
 `;
@@ -75,12 +75,11 @@ void main() {
 precision highp float;
 precision highp int;
 
-flat in uint paint_and_rect_flag_out;
+flat in uint is_rect;
 layout(location = 0) out vec4 out_color;
 
 void main() {
-    bool is_rect = (paint_and_rect_flag_out & 0x80000000u) != 0u;
-    out_color = is_rect
+    out_color = is_rect != 0u
         ? vec4(0.0, 1.0, 0.0, 1.0)
         : vec4(1.0, 0.0, 0.0, 1.0);
 }
