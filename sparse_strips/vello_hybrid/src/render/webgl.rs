@@ -787,7 +787,7 @@ fn clear_atlas_region(renderer: &mut WebGlRenderer, rect: &PendingClearRect) {
 pub(crate) struct WebGlPrograms {
     /// Program for rendering strips.
     strip_program: Program,
-    /// Uniform locations for the strip program
+    /// Uniform locations for the strip program.
     strip_uniforms: StripUniforms,
     /// Program for filter passes.
     filter_program: Option<Program>,
@@ -831,10 +831,8 @@ struct CopyUniforms {
     source_texture: WebGlUniformLocation,
 }
 
-/// Uniform locations for `strip_program`.
 #[derive(Debug)]
 struct StripUniforms {
-    /// Config uniform block index for vertex shader.
     config_vs_block_index: u32,
 }
 
@@ -961,7 +959,6 @@ impl WebGlPrograms {
         let blend_uniforms = None;
         let copy_program = None;
         let copy_uniforms = None;
-
         let strip_uniforms = get_strip_uniforms(&gl, &strip_program);
 
         let resources = create_webgl_resources(&gl, image_cache, layer_config);
@@ -981,13 +978,13 @@ impl WebGlPrograms {
 
         Self {
             strip_program,
+            strip_uniforms,
             filter_program,
             filter_uniforms,
             blend_program,
             blend_uniforms,
             copy_program,
             copy_uniforms,
-            strip_uniforms,
             resources,
             render_size: RenderSize {
                 width: 0,
@@ -1780,18 +1777,13 @@ fn create_shader_program(
     program
 }
 
-/// Get the  uniform locations for the `render_strips` program.
 fn get_strip_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> StripUniforms {
-    let config_vs_name = render::vertex::CONFIG;
-    let config_vs_block_index = gl.get_uniform_block_index(program, config_vs_name);
-
+    let config_vs_block_index = gl.get_uniform_block_index(program, render::vertex::CONFIG);
     debug_assert_ne!(
         config_vs_block_index,
         WebGl2RenderingContext::INVALID_INDEX,
         "invalid uniform index"
     );
-
-    // Bind uniform blocks to binding points.
     gl.uniform_block_binding(program, config_vs_block_index, 0);
 
     StripUniforms {
@@ -2149,36 +2141,44 @@ pub(crate) fn create_framebuffer_for_texture(
 }
 
 const STRIP_STRIDE: i32 = size_of::<GpuStrip>() as i32;
-const STRIP_ATTR_COUNT: i32 = STRIP_STRIDE / 4;
 const _: () = assert!(
     STRIP_STRIDE == 24,
     "GpuStrip layout must match strip vertex stride"
 );
 
-/// Initialize strip VAO.
 fn initialize_strip_vao(gl: &WebGl2RenderingContext, resources: &WebGlResources) {
     gl.bind_vertex_array(Some(&resources.strip_vao));
     gl.bind_buffer(
         WebGl2RenderingContext::ARRAY_BUFFER,
         Some(&resources.strips_buffer),
     );
-
-    for i in 0..STRIP_ATTR_COUNT {
-        let location = i as u32;
-        let offset = i * 4;
-
-        gl.enable_vertex_attrib_array(location);
-        gl.vertex_attrib_i_pointer_with_i32(
-            location,
-            1,
-            WebGl2RenderingContext::UNSIGNED_INT,
-            STRIP_STRIDE,
-            offset,
-        );
-
-        gl.vertex_attrib_divisor(location, 1);
-    }
-
+    gl.enable_vertex_attrib_array(0);
+    gl.vertex_attrib_i_pointer_with_i32(
+        0,
+        1,
+        WebGl2RenderingContext::UNSIGNED_INT,
+        STRIP_STRIDE,
+        0,
+    );
+    gl.vertex_attrib_divisor(0, 1);
+    gl.enable_vertex_attrib_array(1);
+    gl.vertex_attrib_i_pointer_with_i32(
+        1,
+        1,
+        WebGl2RenderingContext::UNSIGNED_INT,
+        STRIP_STRIDE,
+        4,
+    );
+    gl.vertex_attrib_divisor(1, 1);
+    gl.enable_vertex_attrib_array(4);
+    gl.vertex_attrib_i_pointer_with_i32(
+        4,
+        1,
+        WebGl2RenderingContext::UNSIGNED_INT,
+        STRIP_STRIDE,
+        16,
+    );
+    gl.vertex_attrib_divisor(4, 1);
     gl.bind_vertex_array(None);
 }
 
@@ -2221,7 +2221,6 @@ impl WebGlRendererContext<'_> {
                 let width = self.programs.render_size.width;
                 let height = self.programs.render_size.height;
                 self.gl.viewport(0, 0, width as i32, height as i32);
-
                 self.gl.bind_buffer_base(
                     WebGl2RenderingContext::UNIFORM_BUFFER,
                     self.programs.strip_uniforms.config_vs_block_index,
@@ -2236,12 +2235,10 @@ impl WebGlRendererContext<'_> {
                 let size = self.texture_size();
                 self.gl
                     .viewport(0, 0, i32::from(size.width()), i32::from(size.height()));
-
-                let buf = &self.programs.resources.layer_config_buffer;
                 self.gl.bind_buffer_base(
                     WebGl2RenderingContext::UNIFORM_BUFFER,
                     self.programs.strip_uniforms.config_vs_block_index,
-                    Some(buf),
+                    Some(&self.programs.resources.layer_config_buffer),
                 );
             }
         };
@@ -2278,19 +2275,6 @@ impl WebGlRendererContext<'_> {
 
             // Alpha pass: back-to-front, blend on.
             if alpha_count > 0 {
-                // Rebind attribute pointers with offset to start at the alpha portion
-                // of the buffer.
-                let alpha_byte_offset = opaque_count * STRIP_STRIDE;
-                for i in 0..STRIP_ATTR_COUNT {
-                    self.gl.vertex_attrib_i_pointer_with_i32(
-                        i as u32,
-                        1,
-                        WebGl2RenderingContext::UNSIGNED_INT,
-                        STRIP_STRIDE,
-                        i * 4 + alpha_byte_offset,
-                    );
-                }
-
                 self.gl.enable(WebGl2RenderingContext::BLEND);
                 self.gl.draw_arrays_instanced(
                     WebGl2RenderingContext::TRIANGLE_STRIP,
@@ -2298,17 +2282,6 @@ impl WebGlRendererContext<'_> {
                     4,
                     alpha_count,
                 );
-
-                // Restore attribute offsets to base for subsequent passes.
-                for i in 0..STRIP_ATTR_COUNT {
-                    self.gl.vertex_attrib_i_pointer_with_i32(
-                        i as u32,
-                        1,
-                        WebGl2RenderingContext::UNSIGNED_INT,
-                        STRIP_STRIDE,
-                        i * 4,
-                    );
-                }
             }
 
             self.gl.enable(WebGl2RenderingContext::BLEND);
