@@ -1,39 +1,32 @@
 <!doctype html>
-<canvas width="320" height="160"></canvas>
-
+<canvas></canvas>
 <script>
 const gl = document.querySelector("canvas").getContext("webgl2");
 
-const vertex = `#version 300 es
-precision highp float;
+const vertexSource = `#version 300 es
 precision highp int;
 
-layout(location = 0) in highp uint paint_and_rect_flag;
-flat out highp uint is_rect;
+layout(location = 0) in uint paint_and_rect_flag;
+flat out uint is_rect;
 
 void main() {
-  uint vertex = uint(gl_VertexID);
-  float corner_x = float(vertex & 1u);
-  float corner_y = float(vertex >> 1u);
-  float left = -0.9 + float(gl_InstanceID);
-
-  gl_Position = vec4(
-    left + 0.8 * corner_x,
-    -0.8 + 1.6 * corner_y,
-    0.0,
-    1.0
+  vec2 positions[3] = vec2[3](
+    vec2(-1.0, -1.0),
+    vec2( 3.0, -1.0),
+    vec2(-1.0,  3.0)
   );
-
-  bool value = (paint_and_rect_flag & 0x80000000u) != 0u;
-  is_rect = value ? 1u : 0u;
+  is_rect = (paint_and_rect_flag & 0x80000000u) != 0u ? 1u : 0u;
+  vec2 position = positions[gl_VertexID];
+  position.x = position.x * 0.25 + float(gl_InstanceID) - 0.75;
+  gl_Position = vec4(position, 0.0, 1.0);
 }
 `;
 
-const fragment = `#version 300 es
+const fragmentSource = `#version 300 es
 precision highp float;
 precision highp int;
 
-flat in highp uint is_rect;
+flat in uint is_rect;
 out vec4 color;
 
 void main() {
@@ -43,7 +36,7 @@ void main() {
 }
 `;
 
-function compile(type, source) {
+function shader(type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
@@ -51,16 +44,16 @@ function compile(type, source) {
 }
 
 const program = gl.createProgram();
-gl.attachShader(program, compile(gl.VERTEX_SHADER, vertex));
-gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragment));
+gl.attachShader(program, shader(gl.VERTEX_SHADER, vertexSource));
+gl.attachShader(program, shader(gl.FRAGMENT_SHADER, fragmentSource));
 gl.linkProgram(program);
 gl.useProgram(program);
+gl.bindVertexArray(gl.createVertexArray());
 
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-gl.bufferData(gl.ARRAY_BUFFER, new Uint32Array([0x80000000, 0]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, new Uint32Array([0x80000000]), gl.STATIC_DRAW);
 gl.enableVertexAttribArray(0);
-gl.vertexAttribIPointer(0, 1, gl.UNSIGNED_INT, 4, 0);
+gl.vertexAttribIPointer(0, 1, gl.UNSIGNED_INT, 0, 0);
 gl.vertexAttribDivisor(0, 1);
-
-gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, 2);
+gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, 1);
 </script>
