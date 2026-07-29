@@ -31,17 +31,16 @@ fn vs_main(
     instance: StripInstance,
 ) -> VertexOutput {
     var out: VertexOutput;
-    let corner_x = f32(vertex_index & 1u);
-    let corner_y = f32(vertex_index >> 1u);
+    let is_rect = (instance.paint_and_rect_flag & 0x80000000u) != 0u;
+    let packed_height = instance.widths_or_rect_height >> 16u;
+    let selected_height = select(config.strip_height, packed_height, is_rect);
+    let flip = select(0u, 1u, is_rect) ^ (selected_height & 1u);
+    let corner_x = f32((vertex_index & 1u) ^ flip);
+    let corner_y = f32((vertex_index >> 1u) ^ flip);
     let x0 = instance.xy & 0xffffu;
     let y0 = instance.xy >> 16u;
     let width = instance.widths_or_rect_height & 0xffffu;
-    let packed_height = instance.widths_or_rect_height >> 16u;
-    let is_rect = (instance.paint_and_rect_flag & 0x80000000u) != 0u;
-    var height = config.strip_height;
-    if is_rect {
-        height = packed_height;
-    }
+    let height = selected_height;
     let pixel_x = f32(x0) + corner_x * f32(width);
     let pixel_y = f32(y0) + corner_y * f32(height);
     let ndc_x = pixel_x * 2.0 / f32(config.width) - 1.0;
