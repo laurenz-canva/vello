@@ -5,14 +5,12 @@
 //! running on.
 
 use crate::color::{AlphaColor, palette::css};
-use crate::filter_effects::{EdgeMode, Filter, FilterPrimitive};
 #[cfg(not(feature = "std"))]
 use crate::kurbo::common::FloatFuncs as _;
 use crate::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape};
 use crate::paint::{Image, ImageSource, PaintType};
 use crate::peniko::{
-    BlendMode, ColorStop, ColorStops, Compose, Extend, Gradient, ImageQuality, ImageSampler,
-    LinearGradientPosition, Mix,
+    ColorStop, ColorStops, Extend, Gradient, ImageQuality, ImageSampler, LinearGradientPosition,
 };
 use crate::pixmap::Pixmap;
 use alloc::vec::Vec;
@@ -28,16 +26,12 @@ const CIRCLE_CENTER_OFFSET_X: f64 = 1.5;
 const IMAGE_SOURCE_SIZE: f64 = 5.0;
 const PATH_TOLERANCE: f64 = 0.1;
 
-const ELEMENTS: [ProbeElement; 8] = [
+const ELEMENTS: [ProbeElement; 6] = [
     ProbeElement::SolidRect,
     ProbeElement::AlphaBlending,
     ProbeElement::Gradient,
     ProbeElement::ImageNearest,
-    // Temporarily disabled.
-    // ProbeElement::Filter,
     ProbeElement::ImageBilinear,
-    ProbeElement::OpacityLayer,
-    ProbeElement::Blending,
     ProbeElement::Transformed,
 ];
 /// Per-channel absolute tolerance used when comparing probe pixels.
@@ -125,9 +119,6 @@ pub trait ProbeRenderer {
     fn set_paint(&mut self, paint: PaintType);
     fn fill_path(&mut self, path: &BezPath);
     fn fill_rect(&mut self, rect: &Rect);
-    fn push_layer(&mut self, blend_mode: Option<BlendMode>, opacity: Option<f32>);
-    fn push_filter_layer(&mut self, filter: Filter);
-    fn pop_layer(&mut self);
     fn set_paint_transform(&mut self, paint_transform: Affine);
     fn reset_paint_transform(&mut self);
 }
@@ -139,10 +130,7 @@ enum ProbeElement {
     AlphaBlending,
     Gradient,
     ImageNearest,
-    // Filter,
     ImageBilinear,
-    OpacityLayer,
-    Blending,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -198,17 +186,14 @@ impl GridLayout {
 impl ProbeElement {
     fn bounds(self) -> (f64, f64) {
         let (width, height) = match self {
-            Self::SolidRect
-            | Self::Gradient
-            | Self::ImageNearest
-            | Self::ImageBilinear
-            // | Self::Filter
-            | Self::OpacityLayer => (RECT_SIZE, RECT_SIZE),
+            Self::SolidRect | Self::Gradient | Self::ImageNearest | Self::ImageBilinear => {
+                (RECT_SIZE, RECT_SIZE)
+            }
             Self::Transformed => (
                 RECT_SIZE * core::f64::consts::SQRT_2,
                 RECT_SIZE * core::f64::consts::SQRT_2,
             ),
-            Self::AlphaBlending | Self::Blending => (
+            Self::AlphaBlending => (
                 CIRCLE_RADIUS * 2.0 + CIRCLE_CENTER_OFFSET_X * 2.0,
                 CIRCLE_RADIUS * 2.0,
             ),
@@ -318,12 +303,7 @@ fn draw_probe_element(
             ctx.fill_rect(&rect);
         }
         ProbeElement::ImageNearest => draw_centered_padded_image(ctx, cell, image_nearest),
-        // ProbeElement::Filter => draw_blurred_rect(ctx, centered_rect(cell, RECT_SIZE, RECT_SIZE)),
         ProbeElement::ImageBilinear => draw_centered_padded_image(ctx, cell, image_bilinear),
-        ProbeElement::OpacityLayer => {
-            draw_opacity_layer_rect(ctx, centered_rect(cell, RECT_SIZE, RECT_SIZE));
-        }
-        ProbeElement::Blending => draw_layered_difference_circles(ctx, cell),
     }
 }
 
@@ -359,48 +339,6 @@ fn draw_transformed_rect(ctx: &mut impl ProbeRenderer, rect: Rect) {
     ctx.set_paint(css::BLUE.into());
     ctx.fill_rect(&rect);
     ctx.set_transform(Affine::IDENTITY);
-}
-
-#[allow(dead_code, reason = "Will be re-enabled in the future.")]
-fn draw_blurred_rect(ctx: &mut impl ProbeRenderer, rect: Rect) {
-    let blur = Filter::from_primitive(FilterPrimitive::GaussianBlur {
-        std_deviation: 0.5,
-        edge_mode: EdgeMode::None,
-    });
-    ctx.push_filter_layer(blur);
-    ctx.set_paint(css::REBECCA_PURPLE.into());
-    ctx.fill_rect(&rect);
-    ctx.pop_layer();
-}
-
-fn draw_opacity_layer_rect(ctx: &mut impl ProbeRenderer, rect: Rect) {
-    ctx.push_layer(None, Some(0.5));
-    ctx.set_paint(css::ORANGE_RED.into());
-    ctx.fill_rect(&rect);
-    ctx.pop_layer();
-}
-
-fn draw_layered_difference_circles(ctx: &mut impl ProbeRenderer, cell: Rect) {
-    let center = cell.center();
-
-    ctx.push_layer(None, None);
-    ctx.set_paint(css::YELLOW.with_alpha(0.5).into());
-    ctx.fill_path(
-        &Circle::new((center.x - CIRCLE_CENTER_OFFSET_X, center.y), CIRCLE_RADIUS)
-            .to_path(PATH_TOLERANCE),
-    );
-
-    ctx.push_layer(
-        Some(BlendMode::new(Mix::Difference, Compose::SrcOver)),
-        None,
-    );
-    ctx.set_paint(css::GREEN.with_alpha(0.5).into());
-    ctx.fill_path(
-        &Circle::new((center.x + CIRCLE_CENTER_OFFSET_X, center.y), CIRCLE_RADIUS)
-            .to_path(PATH_TOLERANCE),
-    );
-    ctx.pop_layer();
-    ctx.pop_layer();
 }
 
 fn linear_gradient(rect: &Rect) -> Gradient {

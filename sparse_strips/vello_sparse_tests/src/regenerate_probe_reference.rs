@@ -12,10 +12,8 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 use oxipng::Options;
 use vello_common::{
-    filter_effects::Filter,
     kurbo::{Affine, BezPath, Rect},
     paint::{ImageSource, PaintType},
-    peniko::BlendMode,
     pixmap::Pixmap,
     probe::{self, ProbeRenderer},
 };
@@ -50,18 +48,6 @@ impl ProbeRenderer for CpuProbeContext<'_> {
 
     fn fill_rect(&mut self, rect: &Rect) {
         self.0.fill_rect(rect);
-    }
-
-    fn push_layer(&mut self, blend_mode: Option<BlendMode>, opacity: Option<f32>) {
-        self.0.push_layer(None, blend_mode, opacity, None, None);
-    }
-
-    fn push_filter_layer(&mut self, filter: Filter) {
-        self.0.push_filter_layer(filter);
-    }
-
-    fn pop_layer(&mut self) {
-        self.0.pop_layer();
     }
 
     fn set_paint_transform(&mut self, paint_transform: Affine) {

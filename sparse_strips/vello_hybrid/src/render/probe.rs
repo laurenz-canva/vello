@@ -12,12 +12,10 @@ use crate::{RenderError, RenderSize, Scene, WebGlRenderer};
 use alloc::{borrow::Cow, format, sync::Arc};
 use core::ops::Deref;
 use thiserror::Error;
-use vello_common::filter_effects::Filter;
 use vello_common::image_cache::ImageCache;
 use vello_common::kurbo::{Affine, BezPath, Rect};
 use vello_common::multi_atlas::{AllocationStrategy, AtlasConfig};
 use vello_common::paint::{ImageSource, PaintType};
-use vello_common::peniko::BlendMode;
 use vello_common::pixmap::Pixmap;
 use vello_common::probe::Probe;
 use web_sys::{WebGl2RenderingContext, WebGlBuffer, WebGlSync};
@@ -348,18 +346,6 @@ impl vello_common::probe::ProbeRenderer for Scene {
 
     fn fill_rect(&mut self, rect: &Rect) {
         Self::fill_rect(self, rect);
-    }
-
-    fn push_layer(&mut self, blend_mode: Option<BlendMode>, opacity: Option<f32>) {
-        Self::push_layer(self, None, blend_mode, opacity, None, None);
-    }
-
-    fn push_filter_layer(&mut self, filter: Filter) {
-        Self::push_filter_layer(self, filter);
-    }
-
-    fn pop_layer(&mut self) {
-        Self::pop_layer(self);
     }
 
     fn set_paint_transform(&mut self, paint_transform: Affine) {

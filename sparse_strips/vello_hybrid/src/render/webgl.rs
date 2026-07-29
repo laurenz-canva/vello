@@ -70,7 +70,7 @@ use vello_common::{
     pixmap::Pixmap,
     tile::Tile,
 };
-use vello_sparse_shaders::{blend, copy, render};
+use vello_sparse_shaders::render;
 use web_sys::wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     HtmlCanvasElement, WebGl2RenderingContext, WebGlBuffer, WebGlFramebuffer, WebGlProgram,
@@ -831,13 +831,13 @@ pub(crate) struct WebGlPrograms {
     /// Uniform locations for the filter program.
     filter_uniforms: Option<FilterPassUniforms>,
     /// Program for performing blending.
-    blend_program: Program,
+    blend_program: Option<Program>,
     /// Uniform locations for the blend program.
-    blend_uniforms: BlendUniforms,
+    blend_uniforms: Option<BlendUniforms>,
     /// Program for performing copies.
-    copy_program: Program,
+    copy_program: Option<Program>,
     /// Uniform locations for the copy program.
-    copy_uniforms: CopyUniforms,
+    copy_uniforms: Option<CopyUniforms>,
     /// WebGL resources for rendering.
     pub(crate) resources: WebGlResources,
     /// Dimensions of the rendering target.
@@ -1019,11 +1019,10 @@ impl WebGlPrograms {
             create_shader_program(&gl, render::VERTEX_SOURCE, render::FRAGMENT_SOURCE);
         let filter_program = None;
         let filter_uniforms = None;
-        let blend_program =
-            create_shader_program(&gl, blend::VERTEX_SOURCE, blend::FRAGMENT_SOURCE);
-        let blend_uniforms = get_blend_uniforms(&gl, &blend_program);
-        let copy_program = create_shader_program(&gl, copy::VERTEX_SOURCE, copy::FRAGMENT_SOURCE);
-        let copy_uniforms = get_copy_uniforms(&gl, &copy_program);
+        let blend_program = None;
+        let blend_uniforms = None;
+        let copy_program = None;
+        let copy_uniforms = None;
 
         let strip_uniforms = get_strip_uniforms(&gl, &strip_program);
 
@@ -1950,28 +1949,6 @@ fn get_strip_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> StripUn
     }
 }
 
-fn get_blend_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> BlendUniforms {
-    BlendUniforms {
-        layer_texture_0: gl
-            .get_uniform_location(program, blend::fragment::LAYER_TEXTURE_0)
-            .unwrap(),
-        layer_texture_1: gl
-            .get_uniform_location(program, blend::fragment::LAYER_TEXTURE_1)
-            .unwrap(),
-        alphas_texture: gl
-            .get_uniform_location(program, blend::fragment::ALPHAS_TEXTURE)
-            .unwrap(),
-    }
-}
-
-fn get_copy_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> CopyUniforms {
-    CopyUniforms {
-        source_texture: gl
-            .get_uniform_location(program, copy::fragment::SOURCE_TEXTURE)
-            .unwrap(),
-    }
-}
-
 /// Derive this from the number of fields on [`FilterInstanceData`].
 const FILTER_ATTRIB_COUNT: u32 = 9;
 const FILTER_INSTANCE_STRIDE: i32 = size_of::<FilterInstanceData>() as i32;
@@ -2388,6 +2365,12 @@ impl WebGlRendererContext<'_> {
         target: DrawPassTarget,
         child_layer_texture: Option<LayerTextureId>,
     ) {
+        if matches!(&target, DrawPassTarget::Layer(_)) || child_layer_texture.is_some() {
+            self.programs
+                .copy_program
+                .as_ref()
+                .expect("layer rendering is temporarily disabled");
+        }
         let opaque_count = opaque_strips.len();
         let alpha_count = alpha_strips.len();
         if opaque_count == 0 && alpha_count == 0 {
@@ -2606,6 +2589,14 @@ impl WebGlRendererContext<'_> {
         blend_strips: &[BlendStrip],
         bindings: BlendPassBindings,
     ) {
+        let blend_program = self
+            .programs
+            .blend_program
+            .as_ref()
+            .expect("layer rendering is temporarily disabled");
+        let blend_uniforms = self.programs.blend_uniforms.as_ref().unwrap();
+        let copy_program = self.programs.copy_program.as_ref().unwrap();
+        let copy_uniforms = self.programs.copy_uniforms.as_ref().unwrap();
         let _state_guard = WebGlStateGuard::for_intermediate_pass(self.gl);
         let texture_size = self.texture_size();
         self.gl.disable(WebGl2RenderingContext::BLEND);
@@ -2645,15 +2636,14 @@ impl WebGlRendererContext<'_> {
             i32::from(texture_size.width()),
             i32::from(texture_size.height()),
         );
-        self.gl.use_program(Some(&self.programs.blend_program));
+        self.gl.use_program(Some(blend_program));
 
         self.gl.active_texture(WebGl2RenderingContext::TEXTURE2);
         self.gl.bind_texture(
             WebGl2RenderingContext::TEXTURE_2D,
             Some(&self.programs.resources.alphas_texture),
         );
-        self.gl
-            .uniform1i(Some(&self.programs.blend_uniforms.alphas_texture), 2);
+        self.gl.uniform1i(Some(&blend_uniforms.alphas_texture), 2);
 
         self.gl.active_texture(WebGl2RenderingContext::TEXTURE0);
         self.gl.bind_texture(
@@ -2664,8 +2654,7 @@ impl WebGlRendererContext<'_> {
                     .layer_texture(bindings.layer_id(TextureParity::Even)),
             ),
         );
-        self.gl
-            .uniform1i(Some(&self.programs.blend_uniforms.layer_texture_0), 0);
+        self.gl.uniform1i(Some(&blend_uniforms.layer_texture_0), 0);
 
         self.gl.active_texture(WebGl2RenderingContext::TEXTURE1);
         self.gl.bind_texture(
@@ -2676,8 +2665,7 @@ impl WebGlRendererContext<'_> {
                     .layer_texture(bindings.layer_id(TextureParity::Odd)),
             ),
         );
-        self.gl
-            .uniform1i(Some(&self.programs.blend_uniforms.layer_texture_1), 1);
+        self.gl.uniform1i(Some(&blend_uniforms.layer_texture_1), 1);
 
         self.gl
             .draw_arrays_instanced(WebGl2RenderingContext::TRIANGLE_STRIP, 0, 4, instance_count);
@@ -2705,15 +2693,14 @@ impl WebGlRendererContext<'_> {
         );
         self.gl
             .bind_vertex_array(Some(&self.programs.resources.copy_vao));
-        self.gl.use_program(Some(&self.programs.copy_program));
+        self.gl.use_program(Some(copy_program));
 
         self.gl.active_texture(WebGl2RenderingContext::TEXTURE0);
         self.gl.bind_texture(
             WebGl2RenderingContext::TEXTURE_2D,
             Some(self.programs.resources.scratch_binding_texture()),
         );
-        self.gl
-            .uniform1i(Some(&self.programs.copy_uniforms.source_texture), 0);
+        self.gl.uniform1i(Some(&copy_uniforms.source_texture), 0);
 
         self.gl
             .draw_arrays_instanced(WebGl2RenderingContext::TRIANGLE_STRIP, 0, 4, instance_count);
@@ -2728,6 +2715,8 @@ impl WebGlRendererContext<'_> {
             .as_ref()
             .expect("filter shader is temporarily disabled");
         let filter_uniforms = self.programs.filter_uniforms.as_ref().unwrap();
+        let copy_program = self.programs.copy_program.as_ref().unwrap();
+        let copy_uniforms = self.programs.copy_uniforms.as_ref().unwrap();
         let _state_guard = WebGlStateGuard::for_intermediate_pass(self.gl);
         self.gl.disable(WebGl2RenderingContext::BLEND);
         self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
@@ -2738,7 +2727,7 @@ impl WebGlRendererContext<'_> {
             self.programs.upload_copy_instances(self.gl, copy_pass);
             self.gl
                 .bind_vertex_array(Some(&self.programs.resources.copy_vao));
-            self.gl.use_program(Some(&self.programs.copy_program));
+            self.gl.use_program(Some(copy_program));
             self.gl.bind_framebuffer(
                 WebGl2RenderingContext::FRAMEBUFFER,
                 Some(self.programs.resources.scratch_framebuffer()),
@@ -2755,8 +2744,7 @@ impl WebGlRendererContext<'_> {
                 WebGl2RenderingContext::TEXTURE_2D,
                 Some(self.programs.resources.layer_texture(bindings.target())),
             );
-            self.gl
-                .uniform1i(Some(&self.programs.copy_uniforms.source_texture), 0);
+            self.gl.uniform1i(Some(&copy_uniforms.source_texture), 0);
             self.gl.draw_arrays_instanced(
                 WebGl2RenderingContext::TRIANGLE_STRIP,
                 0,
@@ -2834,6 +2822,10 @@ impl WebGlRendererContext<'_> {
     }
 
     fn clear_pass_inner(&self, target: LayerTextureId, rects: &[RectU16]) {
+        self.programs
+            .copy_program
+            .as_ref()
+            .expect("layer rendering is temporarily disabled");
         let size = self.texture_size();
         self.gl.disable(WebGl2RenderingContext::BLEND);
         self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
