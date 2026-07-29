@@ -70,7 +70,7 @@ use vello_common::{
     pixmap::Pixmap,
     tile::Tile,
 };
-use vello_sparse_shaders::{blend, copy, filter as filter_shader, render};
+use vello_sparse_shaders::{blend, copy, render};
 use web_sys::wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     HtmlCanvasElement, WebGl2RenderingContext, WebGlBuffer, WebGlFramebuffer, WebGlProgram,
@@ -827,9 +827,9 @@ pub(crate) struct WebGlPrograms {
     /// Uniform locations for the strip program
     strip_uniforms: StripUniforms,
     /// Program for filter passes.
-    filter_program: Program,
+    filter_program: Option<Program>,
     /// Uniform locations for the filter program.
-    filter_uniforms: FilterPassUniforms,
+    filter_uniforms: Option<FilterPassUniforms>,
     /// Program for performing blending.
     blend_program: Program,
     /// Uniform locations for the blend program.
@@ -1017,12 +1017,8 @@ impl WebGlPrograms {
     ) -> Self {
         let strip_program =
             create_shader_program(&gl, render::VERTEX_SOURCE, render::FRAGMENT_SOURCE);
-        let filter_program = create_shader_program(
-            &gl,
-            filter_shader::VERTEX_SOURCE,
-            filter_shader::FRAGMENT_SOURCE,
-        );
-        let filter_uniforms = get_filter_pass_uniforms(&gl, &filter_program);
+        let filter_program = None;
+        let filter_uniforms = None;
         let blend_program =
             create_shader_program(&gl, blend::VERTEX_SOURCE, blend::FRAGMENT_SOURCE);
         let blend_uniforms = get_blend_uniforms(&gl, &blend_program);
@@ -1954,23 +1950,6 @@ fn get_strip_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> StripUn
     }
 }
 
-fn get_filter_pass_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> FilterPassUniforms {
-    let filter_data = gl
-        .get_uniform_location(program, filter_shader::fragment::FILTER_DATA)
-        .unwrap();
-    let source_texture = gl
-        .get_uniform_location(program, filter_shader::fragment::SOURCE_TEXTURE)
-        .unwrap();
-    let original_texture = gl
-        .get_uniform_location(program, filter_shader::fragment::ORIGINAL_TEXTURE)
-        .unwrap();
-    FilterPassUniforms {
-        filter_data,
-        source_texture,
-        original_texture,
-    }
-}
-
 fn get_blend_uniforms(gl: &WebGl2RenderingContext, program: &Program) -> BlendUniforms {
     BlendUniforms {
         layer_texture_0: gl
@@ -2743,6 +2722,12 @@ impl WebGlRendererContext<'_> {
     }
 
     fn filter_pass_inner(&mut self, plan: &FilterPassPlan, bindings: FilterPassBindings) {
+        let filter_program = self
+            .programs
+            .filter_program
+            .as_ref()
+            .expect("filter shader is temporarily disabled");
+        let filter_uniforms = self.programs.filter_uniforms.as_ref().unwrap();
         let _state_guard = WebGlStateGuard::for_intermediate_pass(self.gl);
         self.gl.disable(WebGl2RenderingContext::BLEND);
         self.gl.disable(WebGl2RenderingContext::SCISSOR_TEST);
@@ -2780,7 +2765,7 @@ impl WebGlRendererContext<'_> {
             );
         }
 
-        self.gl.use_program(Some(&self.programs.filter_program));
+        self.gl.use_program(Some(filter_program));
         self.gl
             .bind_vertex_array(Some(&self.programs.resources.filter_vao));
 
@@ -2789,8 +2774,7 @@ impl WebGlRendererContext<'_> {
             WebGl2RenderingContext::TEXTURE_2D,
             Some(&self.programs.resources.filter_data_texture),
         );
-        self.gl
-            .uniform1i(Some(&self.programs.filter_uniforms.filter_data), 0);
+        self.gl.uniform1i(Some(&filter_uniforms.filter_data), 0);
 
         self.gl.active_texture(WebGl2RenderingContext::TEXTURE2);
         self.gl.bind_texture(
@@ -2798,13 +2782,14 @@ impl WebGlRendererContext<'_> {
             Some(self.programs.resources.scratch_binding_texture()),
         );
         self.gl
-            .uniform1i(Some(&self.programs.filter_uniforms.original_texture), 2);
+            .uniform1i(Some(&filter_uniforms.original_texture), 2);
 
         for (step_index, instances) in plan.steps().enumerate() {
             self.do_filter_instance_pass(
                 instances,
                 bindings.input(step_index),
                 bindings.output(step_index),
+                filter_uniforms,
             );
         }
 
@@ -2816,6 +2801,7 @@ impl WebGlRendererContext<'_> {
         instances: &[FilterInstanceData],
         input: LayerTextureId,
         output: LayerTextureId,
+        filter_uniforms: &FilterPassUniforms,
     ) {
         self.gl.bind_framebuffer(
             WebGl2RenderingContext::FRAMEBUFFER,
@@ -2834,8 +2820,7 @@ impl WebGlRendererContext<'_> {
             WebGl2RenderingContext::TEXTURE_2D,
             Some(self.programs.resources.layer_texture(input)),
         );
-        self.gl
-            .uniform1i(Some(&self.programs.filter_uniforms.source_texture), 1);
+        self.gl.uniform1i(Some(&filter_uniforms.source_texture), 1);
 
         // TODO: Filter instances ideally should be uploaded once for the whole round (or even once
         // globally), not per pass.
