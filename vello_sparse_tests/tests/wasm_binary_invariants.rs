@@ -40,8 +40,6 @@ async fn no_simd_instruction_inclusion() {
     );
 }
 
-// This test is ignored by default due to flakiness in Github CI.
-#[ignore]
 #[cfg(feature = "webgl")]
 #[wasm_bindgen_test]
 async fn webgl_probe_succeeds() {
@@ -49,6 +47,8 @@ async fn webgl_probe_succeeds() {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
     use web_sys::HtmlCanvasElement;
+
+
 
     async fn wait_for_animation_frame() {
         let promise = web_sys::js_sys::Promise::new(&mut |resolve, _reject| {
