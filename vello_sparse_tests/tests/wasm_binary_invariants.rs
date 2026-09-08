@@ -48,6 +48,8 @@ async fn webgl_probe_succeeds() {
     use wasm_bindgen_futures::JsFuture;
     use web_sys::HtmlCanvasElement;
 
+
+
     async fn wait_for_animation_frame() {
         let promise = web_sys::js_sys::Promise::new(&mut |resolve, _reject| {
             web_sys::window()
