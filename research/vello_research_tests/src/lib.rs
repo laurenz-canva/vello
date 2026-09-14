@@ -30,9 +30,9 @@ use std::env;
 use std::io::ErrorKind;
 use std::num::NonZeroUsize;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use scenes::{ExampleScene, ImageCache, SceneParams, SimpleText};
 use vello::kurbo::{Affine, Vec2};
 use vello::peniko::{Blob, Color, ImageFormat, color::palette};
@@ -45,6 +45,33 @@ use vello::{AaConfig, RendererOptions, Scene, util::RenderContext, util::block_o
 
 mod compare;
 mod snapshot;
+
+struct PooledRenderer {
+    use_cpu: bool,
+    anti_aliasing: AaConfig,
+    renderer: vello::Renderer,
+}
+
+struct TestRenderPool {
+    context: RenderContext,
+    device_id: usize,
+    renderers: Vec<PooledRenderer>,
+    targets: Vec<PooledTarget>,
+}
+
+struct PooledTarget {
+    width: u32,
+    height: u32,
+    padded_byte_width: u32,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    buffer: wgpu::Buffer,
+}
+
+// The research tests are linked into one libtest binary so this pool is shared by every case.
+// Renderer variants are retained per CPU/GPU mode and antialiasing configuration, while targets
+// are retained per size.
+static TEST_RENDER_POOL: OnceLock<Mutex<TestRenderPool>> = OnceLock::new();
 
 pub use compare::{GpuCpuComparison, compare_gpu_cpu, compare_gpu_cpu_sync};
 pub use snapshot::{
@@ -103,38 +130,76 @@ pub async fn get_scene_image(
     params: &TestParams,
     scene: &Scene,
 ) -> Result<ImageData, anyhow::Error> {
-    let mut context = RenderContext::new();
-    let device_id = context
-        .device(None)
-        .await
-        .ok_or_else(|| anyhow!("No compatible device found"))?;
-    let device_handle = &mut context.devices[device_id];
+    let render_pool = TEST_RENDER_POOL.get_or_init(|| {
+        let mut context = RenderContext::new();
+        let device_id = pollster::block_on(context.device(None))
+            .expect("No compatible device found for renderer tests");
+        Mutex::new(TestRenderPool {
+            context,
+            device_id,
+            renderers: Vec::new(),
+            targets: Vec::new(),
+        })
+    });
+    let mut render_pool = render_pool
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let pooled_renderer = render_pool
+        .renderers
+        .iter()
+        .position(|renderer| {
+            renderer.use_cpu == params.use_cpu && renderer.anti_aliasing == params.anti_aliasing
+        })
+        .map(|index| render_pool.renderers.swap_remove(index));
+    let device_handle = &render_pool.context.devices[render_pool.device_id];
     let device = &device_handle.device;
     let queue = &device_handle.queue;
-    let mut renderer = vello::Renderer::new(
-        device,
-        RendererOptions {
+    let mut pooled_renderer = if let Some(renderer) = pooled_renderer {
+        renderer
+    } else {
+        PooledRenderer {
             use_cpu: params.use_cpu,
-            num_init_threads: NonZeroUsize::new(1),
-            antialiasing_support: std::iter::once(params.anti_aliasing).collect(),
-            pipeline_cache: None,
-        },
-    )
-    .or_else(|_| bail!("Got non-Send/Sync error from creating renderer"))?;
-    let width = params.width;
-    let height = params.height;
-    let render_params = vello::RenderParams {
-        base_color: params.base_color.unwrap_or(palette::css::BLACK),
-        width,
-        height,
-        antialiasing_method: params.anti_aliasing,
+            anti_aliasing: params.anti_aliasing,
+            renderer: vello::Renderer::new(
+                device,
+                RendererOptions {
+                    use_cpu: params.use_cpu,
+                    num_init_threads: NonZeroUsize::new(1),
+                    antialiasing_support: std::iter::once(params.anti_aliasing).collect(),
+                    pipeline_cache: None,
+                },
+            )
+            .or_else(|_| bail!("Got non-Send/Sync error from creating renderer"))?,
+        }
     };
+    let pooled_target = render_pool
+        .targets
+        .iter()
+        .position(|target| target.width == params.width && target.height == params.height)
+        .map(|index| render_pool.targets.swap_remove(index))
+        .unwrap_or_else(|| create_pooled_target(device, params.width, params.height));
+    let image = render_scene_image(
+        device,
+        queue,
+        &mut pooled_renderer.renderer,
+        &pooled_target,
+        params,
+        scene,
+    );
+    if image.is_ok() {
+        render_pool.renderers.push(pooled_renderer);
+        render_pool.targets.push(pooled_target);
+    }
+    image
+}
+
+fn create_pooled_target(device: &wgpu::Device, width: u32, height: u32) -> PooledTarget {
     let size = Extent3d {
         width,
         height,
         depth_or_array_layers: 1,
     };
-    let target = device.create_texture(&TextureDescriptor {
+    let texture = device.create_texture(&TextureDescriptor {
         label: Some("Target texture"),
         size,
         mip_level_count: 1,
@@ -144,35 +209,65 @@ pub async fn get_scene_image(
         usage: TextureUsages::STORAGE_BINDING | TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    renderer
-        .render_to_texture(device, queue, scene, &view, &render_params)
-        .or_else(|_| bail!("Got non-Send/Sync error from rendering"))?;
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let padded_byte_width = (width * 4).next_multiple_of(256);
-    let buffer_size = padded_byte_width as u64 * height as u64;
     let buffer = device.create_buffer(&BufferDescriptor {
-        label: Some("val"),
-        size: buffer_size,
+        label: Some("Vello research test readback buffer"),
+        size: u64::from(padded_byte_width) * u64::from(height),
         usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    PooledTarget {
+        width,
+        height,
+        padded_byte_width,
+        texture,
+        view,
+        buffer,
+    }
+}
+
+fn render_scene_image(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut vello::Renderer,
+    target: &PooledTarget,
+    params: &TestParams,
+    scene: &Scene,
+) -> Result<ImageData, anyhow::Error> {
+    let width = params.width;
+    let height = params.height;
+    let render_params = vello::RenderParams {
+        base_color: params.base_color.unwrap_or(palette::css::BLACK),
+        width,
+        height,
+        antialiasing_method: params.anti_aliasing,
+    };
+    renderer
+        .render_to_texture(device, queue, scene, &target.view, &render_params)
+        .or_else(|_| bail!("Got non-Send/Sync error from rendering"))?;
+    let size = Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    };
     let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
         label: Some("Copy out buffer"),
     });
     encoder.copy_texture_to_buffer(
-        target.as_image_copy(),
+        target.texture.as_image_copy(),
         TexelCopyBufferInfo {
-            buffer: &buffer,
+            buffer: &target.buffer,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(padded_byte_width),
+                bytes_per_row: Some(target.padded_byte_width),
                 rows_per_image: None,
             },
         },
         size,
     );
     queue.submit([encoder.finish()]);
-    let buf_slice = buffer.slice(..);
+    let buf_slice = target.buffer.slice(..);
     let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
     buf_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
     if let Some(recv_result) = block_on_wgpu(device, receiver.receive()) {
@@ -183,9 +278,11 @@ pub async fn get_scene_image(
     let data = buf_slice.get_mapped_range();
     let mut result_unpadded = Vec::<u8>::with_capacity((width * height * 4).try_into()?);
     for row in 0..height {
-        let start = (row * padded_byte_width).try_into()?;
+        let start = (row * target.padded_byte_width).try_into()?;
         result_unpadded.extend(&data[start..start + (width * 4) as usize]);
     }
+    drop(data);
+    target.buffer.unmap();
     let data = Blob::new(Arc::new(result_unpadded));
     let image = ImageData {
         data,

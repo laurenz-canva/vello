@@ -1,9 +1,15 @@
 // Copyright 2025 the Vello Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+use std::cell::RefCell;
 #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
 use std::collections::HashMap;
 use std::sync::Arc;
+#[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
+use std::sync::{Mutex, MutexGuard};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::OnceLock;
 
 use glifo::GlyphRunBackend;
 use vello_common::color::{AlphaColor, Srgb};
@@ -295,22 +301,74 @@ impl Renderer for CpuRenderer {
 }
 
 #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
-static WGPU_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static WGPU_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+#[cfg(not(target_arch = "wasm32"))]
+static NATIVE_GPU_CONTEXT: OnceLock<NativeGpuContext> = OnceLock::new();
+
+#[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
+struct NativeGpuContext {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    renderers: Mutex<Vec<PooledNativeRenderer>>,
+}
+
+#[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
+struct PooledNativeRenderer {
+    width: u16,
+    height: u16,
+    use_depth_buffer: bool,
+    resources: HybridResources,
+    texture: wgpu::Texture,
+    texture_view: wgpu::TextureView,
+    depth_texture_view: Option<wgpu::TextureView>,
+    readback_buffer: wgpu::Buffer,
+    renderer: vello_gpu::Renderer,
+}
+
+#[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
+fn new_gpu_context() -> NativeGpuContext {
+    let instance = wgpu::Instance::default();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::default(),
+        force_fallback_adapter: false,
+        compatible_surface: None,
+    }))
+    .expect("Failed to find an appropriate adapter");
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("Vello test device"),
+        required_features: wgpu::Features::empty(),
+        ..Default::default()
+    }))
+    .expect("Failed to create device");
+
+    NativeGpuContext {
+        device,
+        queue,
+        renderers: Mutex::new(Vec::new()),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_gpu_context() -> &'static NativeGpuContext {
+    NATIVE_GPU_CONTEXT.get_or_init(new_gpu_context)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type TestGpuContext = &'static NativeGpuContext;
+
+#[cfg(all(target_arch = "wasm32", not(feature = "webgl")))]
+type TestGpuContext = NativeGpuContext;
 
 #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
 pub(crate) struct HybridRenderer {
     scene: Scene,
-    resources: HybridResources,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    texture: wgpu::Texture,
-    texture_view: wgpu::TextureView,
-    depth_texture_view: Option<wgpu::TextureView>,
-    renderer: vello_gpu::Renderer,
+    gpu: TestGpuContext,
+    pooled: Option<PooledNativeRenderer>,
     external_textures: HashMap<TextureId, wgpu::TextureView>,
     next_external_texture_id: u64,
     target_init: HybridTargetInit<'static>,
-    gpu_test_guard: Option<std::sync::MutexGuard<'static, ()>>,
+    _gpu_test_guard: Option<MutexGuard<'static, ()>>,
 }
 
 #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
@@ -321,74 +379,94 @@ impl HybridRenderer {
         settings: HybridRenderSettings,
         use_depth_buffer: bool,
     ) -> Self {
+        // Libtest keeps the generated suite in one process. Serialising only GPU-backed test
+        // execution lets CPU cases remain parallel while making the expensive device, renderer,
+        // resource caches, and render targets reusable between GPU cases.
+        let gpu_test_guard = WGPU_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        #[cfg(not(target_arch = "wasm32"))]
+        let gpu = native_gpu_context();
+        #[cfg(target_arch = "wasm32")]
+        let gpu = new_gpu_context();
         let scene = Scene::new_with(width, height, settings.level);
-        // Initialize wgpu device and queue for GPU rendering
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        }))
-        .expect("Failed to find an appropriate adapter");
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("Device"),
-            required_features: wgpu::Features::empty(),
-            ..Default::default()
-        }))
-        .expect("Failed to create device");
+        let pooled = {
+            let mut renderers = gpu.renderers.lock().unwrap();
+            if let Some(index) = renderers.iter().position(|renderer| {
+                renderer.width == width
+                    && renderer.height == height
+                    && renderer.use_depth_buffer == use_depth_buffer
+            }) {
+                renderers.swap_remove(index)
+            } else {
+                drop(renderers);
+                let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Render Target"),
+                    size: wgpu::Extent3d {
+                        width: width.into(),
+                        height: height.into(),
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                });
+                let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let (renderer, resources) = vello_gpu::Renderer::new_with(
+                    &gpu.device,
+                    &vello_gpu::RenderTargetConfig {
+                        format: texture.format(),
+                        width,
+                        height,
+                    },
+                    settings,
+                );
+                let render_size = vello_gpu::RenderSize { width, height };
+                let depth_texture_view = use_depth_buffer.then(|| {
+                    vello_gpu::Renderer::create_depth_texture_view(&gpu.device, &render_size)
+                });
+                let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
+                let readback_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Vello test readback buffer"),
+                    size: u64::from(bytes_per_row) * u64::from(height),
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
 
-        // Create a render target texture
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Render Target"),
-            size: wgpu::Extent3d {
-                width: width.into(),
-                height: height.into(),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Create renderer and render the scene to the texture
-        let (renderer, resources) = vello_gpu::Renderer::new_with(
-            &device,
-            &vello_gpu::RenderTargetConfig {
-                format: texture.format(),
-                width,
-                height,
-            },
-            settings,
-        );
-        let render_size = vello_gpu::RenderSize { width, height };
-        let depth_texture_view = use_depth_buffer
-            .then(|| vello_gpu::Renderer::create_depth_texture_view(&device, &render_size));
+                PooledNativeRenderer {
+                    width,
+                    height,
+                    use_depth_buffer,
+                    resources,
+                    texture,
+                    texture_view,
+                    depth_texture_view,
+                    readback_buffer,
+                    renderer,
+                }
+            }
+        };
 
         Self {
             scene,
-            resources,
-            device,
-            queue,
-            texture,
-            texture_view,
-            depth_texture_view,
-            renderer,
+            gpu,
+            pooled: Some(pooled),
             external_textures: HashMap::new(),
             next_external_texture_id: 1,
             target_init: HybridTargetInit::Clear(ClearSettings::default()),
-            gpu_test_guard: None,
+            _gpu_test_guard: Some(gpu_test_guard),
         }
     }
 
-    fn lock_gpu_test(&mut self) {
-        if self.gpu_test_guard.is_none() {
-            self.gpu_test_guard = Some(WGPU_TEST_MUTEX.lock().unwrap());
+    fn return_to_pool(&mut self) {
+        if let Some(pooled) = self.pooled.take() {
+            self.gpu.renderers.lock().unwrap().push(pooled);
         }
+        self._gpu_test_guard = None;
     }
 
     fn upload_image_with_resources(
@@ -397,17 +475,26 @@ impl HybridRenderer {
         label: &'static str,
     ) -> ImageId {
         let mut encoder = self
+            .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-        let image_id = self.renderer.upload_image(
-            &mut self.resources,
-            &self.device,
-            &self.queue,
+        let pooled = self.pooled.as_mut().unwrap();
+        let image_id = pooled.renderer.upload_image(
+            &mut pooled.resources,
+            &self.gpu.device,
+            &self.gpu.queue,
             &mut encoder,
             pixmap,
         );
-        self.queue.submit([encoder.finish()]);
+        self.gpu.queue.submit([encoder.finish()]);
         image_id
+    }
+}
+
+#[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
+impl Drop for HybridRenderer {
+    fn drop(&mut self) {
+        self.return_to_pool();
     }
 }
 
@@ -474,7 +561,8 @@ impl Renderer for HybridRenderer {
         &mut self,
         font: &FontData,
     ) -> glifo::GlyphRunBuilder<'_, Self::GlyphRunBackend<'_>> {
-        self.scene.glyph_run(&mut self.resources, font)
+        let pooled = self.pooled.as_mut().unwrap();
+        self.scene.glyph_run(&mut pooled.resources, font)
     }
 
     fn push_layer(
@@ -577,16 +665,6 @@ impl Renderer for HybridRenderer {
     }
 
     fn render(&mut self) {
-        // On some platforms using `cargo test` triggers segmentation faults in wgpu when the GPU
-        // tests are run in parallel (likely related to the number of device resources being
-        // requested simultaneously). This is "fixed" by putting a mutex around GPU rendering and
-        // readback. This slows down testing when `cargo test` is used.
-        //
-        // Testing with `cargo nextest` (as on CI) is not meaningfully slowed down. `nextest` runs
-        // each test in its own process (<https://nexte.st/docs/design/why-process-per-test/>),
-        // meaning there is no contention on this mutex.
-        self.lock_gpu_test();
-
         let width = self.scene.width();
         let height = self.scene.height();
 
@@ -597,61 +675,57 @@ impl Renderer for HybridRenderer {
             texture_bindings.insert(*texture_id, texture.clone());
         }
         let mut encoder = self
+            .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Vello Render"),
             });
-        self.renderer
+        let pooled = self.pooled.as_mut().unwrap();
+        pooled
+            .renderer
             .render(
                 &self.scene,
-                &mut self.resources,
-                &self.device,
-                &self.queue,
+                &mut pooled.resources,
+                &self.gpu.device,
+                &self.gpu.queue,
                 &mut encoder,
                 &render_size,
-                &self.texture_view,
-                self.depth_texture_view.as_ref(),
+                &pooled.texture_view,
+                pooled.depth_texture_view.as_ref(),
                 &texture_bindings,
                 self.target_init,
             )
             .unwrap();
 
-        self.queue.submit([encoder.finish()]);
+        self.gpu.queue.submit([encoder.finish()]);
     }
 
     // This method creates device resources every time it is called. This does not matter much for
     // testing, but should not be used as a basis for implementing something real. This would be a
     // very bad example for that.
     fn snapshot(&mut self) -> Pixmap {
-        self.lock_gpu_test();
-
         let width = self.scene.width();
         let height = self.scene.height();
 
         let mut encoder = self
+            .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Vello Readback"),
             });
 
-        // Create a buffer to copy the texture data
         let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
-        let texture_copy_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Output Buffer"),
-            size: u64::from(bytes_per_row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let texture_copy_buffer = &self.pooled.as_ref().unwrap().readback_buffer;
 
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
+                texture: &self.pooled.as_ref().unwrap().texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyBufferInfo {
-                buffer: &texture_copy_buffer,
+                buffer: texture_copy_buffer,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(bytes_per_row),
@@ -665,7 +739,7 @@ impl Renderer for HybridRenderer {
             },
         );
 
-        self.queue.submit([encoder.finish()]);
+        self.gpu.queue.submit([encoder.finish()]);
 
         // Map the buffer for reading
         texture_copy_buffer
@@ -675,7 +749,8 @@ impl Renderer for HybridRenderer {
                     panic!("Failed to map texture for reading");
                 }
             });
-        self.device
+        self.gpu
+            .device
             .poll(wgpu::PollType::wait_indefinitely())
             .unwrap();
 
@@ -694,8 +769,7 @@ impl Renderer for HybridRenderer {
             buf.copy_from_slice(&row[0..width as usize * 4]);
         }
         texture_copy_buffer.unmap();
-        drop(texture_copy_buffer);
-        self.gpu_test_guard = None;
+        self.return_to_pool();
         pixmap
     }
 
@@ -705,7 +779,7 @@ impl Renderer for HybridRenderer {
 
         let width = u32::from(pixmap.width());
         let height = u32::from(pixmap.height());
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+        let texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Test External Texture"),
             size: wgpu::Extent3d {
                 width,
@@ -719,7 +793,7 @@ impl Renderer for HybridRenderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.queue.write_texture(
+        self.gpu.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
@@ -754,11 +828,25 @@ impl Renderer for HybridRenderer {
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "webgl"))]
-pub(crate) struct HybridRenderer {
-    scene: Scene,
+struct PooledWebGlRenderer {
+    width: u16,
+    height: u16,
+    use_depth_buffer: bool,
     resources: HybridResources,
     renderer: vello_gpu::WebGlRenderer,
     gl: WebGl2RenderingContext,
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+thread_local! {
+    static WEBGL_RENDERER_POOL: RefCell<Vec<PooledWebGlRenderer>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+pub(crate) struct HybridRenderer {
+    scene: Scene,
+    pooled: Option<PooledWebGlRenderer>,
     external_textures: vello_gpu::WebGlTextureBindings,
     next_external_texture_id: u64,
     clear_color: AlphaColor<Srgb>,
@@ -767,9 +855,24 @@ pub(crate) struct HybridRenderer {
 #[cfg(all(target_arch = "wasm32", feature = "webgl"))]
 impl HybridRenderer {
     fn upload_image(&mut self, pixmap: &Arc<Pixmap>) -> ImageId {
-        self.renderer
-            .upload_image(&mut self.resources, pixmap)
+        let pooled = self.pooled.as_mut().unwrap();
+        pooled
+            .renderer
+            .upload_image(&mut pooled.resources, pixmap)
             .unwrap()
+    }
+
+    fn return_to_pool(&mut self) {
+        if let Some(pooled) = self.pooled.take() {
+            WEBGL_RENDERER_POOL.with(|renderers| renderers.borrow_mut().push(pooled));
+        }
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+impl Drop for HybridRenderer {
+    fn drop(&mut self) {
+        self.return_to_pool();
     }
 }
 
@@ -811,29 +914,53 @@ impl Renderer for HybridRenderer {
         // See the comment above for why we change the `min_texture_size`.
         settings.memory_settings.layers_config.min_texture_size = vello_gpu::SizeU16::new(100);
         let scene = Scene::new_with(width, height, settings.level);
-        // Create an offscreen HTMLCanvasElement, render the test image to it, and finally read off
-        // the pixmap for diff checking.
-        let document = web_sys::window().unwrap().document().unwrap();
-        let canvas = document
-            .create_element("canvas")
-            .unwrap()
-            .dyn_into::<HtmlCanvasElement>()
-            .unwrap();
-        canvas.set_width(width.into());
-        canvas.set_height(height.into());
-        let (renderer, resources) =
-            vello_gpu::WebGlRenderer::new_with(&canvas, settings, use_depth_buffer).unwrap();
-        let gl = canvas
-            .get_context("webgl2")
-            .unwrap()
-            .unwrap()
-            .dyn_into::<WebGl2RenderingContext>()
-            .unwrap();
+        let pooled = WEBGL_RENDERER_POOL
+            .with(|renderers| {
+                let mut renderers = renderers.borrow_mut();
+                renderers
+                    .iter()
+                    .position(|renderer| {
+                        renderer.width == width
+                            && renderer.height == height
+                            && renderer.use_depth_buffer == use_depth_buffer
+                    })
+                    .map(|index| renderers.swap_remove(index))
+            })
+            .unwrap_or_else(|| {
+                // Create an offscreen HTMLCanvasElement, render the test image to it, and finally
+                // read the pixmap back for diff checking.
+                let document = web_sys::window().unwrap().document().unwrap();
+                let canvas = document
+                    .create_element("canvas")
+                    .unwrap()
+                    .dyn_into::<HtmlCanvasElement>()
+                    .unwrap();
+                canvas.set_width(width.into());
+                canvas.set_height(height.into());
+                let (renderer, resources) = vello_gpu::WebGlRenderer::new_with(
+                    &canvas,
+                    settings,
+                    use_depth_buffer,
+                )
+                .unwrap();
+                let gl = canvas
+                    .get_context("webgl2")
+                    .unwrap()
+                    .unwrap()
+                    .dyn_into::<WebGl2RenderingContext>()
+                    .unwrap();
+                PooledWebGlRenderer {
+                    width,
+                    height,
+                    use_depth_buffer,
+                    resources,
+                    renderer,
+                    gl,
+                }
+            });
         Self {
             scene,
-            resources,
-            renderer,
-            gl,
+            pooled: Some(pooled),
             external_textures: vello_gpu::WebGlTextureBindings::new(),
             next_external_texture_id: 1,
             clear_color: AlphaColor::TRANSPARENT,
@@ -869,7 +996,8 @@ impl Renderer for HybridRenderer {
         &mut self,
         font: &FontData,
     ) -> glifo::GlyphRunBuilder<'_, Self::GlyphRunBackend<'_>> {
-        self.scene.glyph_run(&mut self.resources, font)
+        let pooled = self.pooled.as_mut().unwrap();
+        self.scene.glyph_run(&mut pooled.resources, font)
     }
 
     fn push_clip_path(&mut self, path: &BezPath) {
@@ -976,10 +1104,12 @@ impl Renderer for HybridRenderer {
         let height = self.scene.height();
 
         let render_size = vello_gpu::RenderSize { width, height };
-        self.renderer
+        let pooled = self.pooled.as_mut().unwrap();
+        pooled
+            .renderer
             .render(
                 &self.scene,
-                &mut self.resources,
+                &mut pooled.resources,
                 &render_size,
                 &self.external_textures,
                 self.clear_color,
@@ -995,7 +1125,10 @@ impl Renderer for HybridRenderer {
         let width = self.scene.width();
         let height = self.scene.height();
         let mut pixels = vec![0_u8; (width as usize) * (height as usize) * 4];
-        self.gl
+        self.pooled
+            .as_ref()
+            .unwrap()
+            .gl
             .read_pixels_with_opt_u8_array(
                 0,
                 0,
@@ -1015,22 +1148,25 @@ impl Renderer for HybridRenderer {
             a[y * row_bytes..(y + 1) * row_bytes].swap_with_slice(&mut b[..row_bytes]);
         }
 
-        Pixmap::from_parts(
+        let pixmap = Pixmap::from_parts(
             pixels,
             width,
             height,
             PixelMetadata::new(ImageAlphaType::AlphaPremultiplied, true),
-        )
+        );
+        self.return_to_pool();
+        pixmap
     }
 
     fn register_external_texture(&mut self, pixmap: Arc<Pixmap>) -> TextureId {
         let texture_id = TextureId(self.next_external_texture_id);
         self.next_external_texture_id += 1;
 
-        let texture = self.gl.create_texture().unwrap();
-        self.gl
+        let gl = &self.pooled.as_ref().unwrap().gl;
+        let texture = gl.create_texture().unwrap();
+        gl
             .bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
-        self.gl
+        gl
             .tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
                 WebGl2RenderingContext::TEXTURE_2D,
                 0,
@@ -1063,11 +1199,9 @@ impl Renderer for HybridRenderer {
                 WebGl2RenderingContext::CLAMP_TO_EDGE,
             ),
         ] {
-            self.gl
-                .tex_parameteri(WebGl2RenderingContext::TEXTURE_2D, param, value as i32);
+            gl.tex_parameteri(WebGl2RenderingContext::TEXTURE_2D, param, value as i32);
         }
-        self.gl
-            .bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
+        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, None);
 
         self.external_textures.insert(texture_id, texture);
         texture_id

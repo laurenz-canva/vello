@@ -27,13 +27,13 @@ env:
 
 # Rationale
 #
-# We don't run clippy with --all-targets because then even --lib and --bins are compiled with
-# dev dependencies enabled, which does not match how they would be compiled by users.
+# The exhaustive merge/main clippy pass doesn't use --all-targets because then even --lib and
+# --bins are compiled with dev dependencies enabled, which does not match how users compile them.
 # A dev dependency might enable a feature that we need for a regular dependency,
 # and checking with --all-targets would not find our feature requirements lacking.
 # This problem still applies to cargo resolver version 2.
-# Thus we split all the targets into two steps, one with --lib --bins
-# and another with --tests --benches --examples.
+# Thus the exhaustive pass splits the targets into two steps, one with --lib --bins and another
+# with --tests --benches --examples. Pull requests use one --all-targets pass as a fast sentinel.
 # Also, we can't give --lib --bins explicitly because then cargo will error on binary-only packages.
 # Luckily the default behavior of cargo with no explicit targets is the same but without the error.
 #
@@ -43,8 +43,10 @@ env:
 # Using cargo-hack also allows us to more easily test the feature matrix of our packages.
 # We use --each-feature & --optional-deps which will run a separate check for every feature.
 #
-# We use cargo-nextest, which has a faster concurrency model for running tests.
-# However cargo-nextest does not support running doc tests, so we also have a cargo test --doc step.
+# We use cargo-nextest for the regular workspace test binaries. The large generated vello_tests
+# binary deliberately uses libtest instead: nextest's process-per-test isolation prevents its GPU
+# fixture from being reused and is particularly expensive on Windows and macOS.
+# Cargo-nextest does not support running doc tests, so we also have a cargo test --doc step.
 # For more information see https://github.com/nextest-rs/nextest/issues/16
 #
 # The MSRV jobs run only cargo check because different clippy versions can disagree on goals and
@@ -54,9 +56,8 @@ env:
 # and as such will error out if our dependency tree accidentally tries to use std.
 # https://doc.rust-lang.org/stable/rustc/platform-support/x86_64-unknown-none.html
 #
-# We don't save caches in the merge-group cases, because those caches will never be re-used (apart
-# from the very rare cases where there are multiple PRs in the merge queue).
-# This is because GitHub doesn't share caches between merge queues and the main branch.
+# Pull request and merge-group caches are scoped to synthetic refs and cannot seed other pull
+# requests. Only main writes Rust caches; all other events restore the compatible main cache.
 
 name: CI
 
@@ -99,11 +100,6 @@ jobs:
       - name: Run taplo fmt
         run: taplo fmt --check --diff
 
-      - name: install ripgrep
-        run: |
-          sudo apt update
-          sudo apt install ripgrep
-
       - name: check copyright headers
         run: bash .github/copyright.sh
       
@@ -124,8 +120,11 @@ jobs:
       - name: Run cargo rdme (glifo)
         run: cargo rdme --check --workspace-project=glifo
 
-  allocation-benchmarks:
-    name: CPU allocation benchmarks
+      - name: check typos
+        uses: crate-ci/typos@v1.45.0
+
+  clippy-stable:
+    name: cargo clippy and feature checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -134,30 +133,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE_VER }}
-
-      - name: install native dependencies
-        run: sudo apt-get update; sudo apt-get install --no-install-recommends libfontconfig-dev
-
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: check CPU allocation regressions
-        run: cargo bench -p vello_bench --locked --bench allocations
-
-  clippy-stable:
-    name: cargo clippy
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: install stable toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_STABLE_VER }}
-          targets: x86_64-unknown-none
+          targets: x86_64-unknown-none,wasm32-unknown-unknown
           components: clippy
 
       - name: install cargo-hack
@@ -166,64 +142,62 @@ jobs:
           tool: cargo-hack
 
       - name: install native dependencies
-        if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libfontconfig-dev
 
       - name: restore cache
         uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.event_name != 'merge_group' }}
-          cache-bin: ${{ matrix.os != 'macos-latest' }} # works around https://github.com/Swatinem/rust-cache/issues/341
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      # Pull requests get one broad, fast lint pass. The feature powerset below remains on the
+      # merge queue and main, where its cost does not delay the first round of review feedback.
+      - name: cargo clippy (pull request)
+        if: github.event_name == 'pull_request'
+        run: cargo clippy --workspace --exclude vello_bench --locked --all-features --all-targets -- -D warnings
 
       - name: cargo clippy (no_std)
+        if: github.event_name != 'pull_request'
         run: cargo hack clippy ${{ env.RUST_NO_STD_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features libm,u8_pipeline,f32_pipeline --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} --target x86_64-unknown-none -- -D warnings
 
       - name: cargo clippy
-        run: cargo hack clippy --workspace --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline -- -D warnings
+        if: github.event_name != 'pull_request'
+        run: cargo hack clippy --workspace --exclude vello_bench --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline -- -D warnings
 
       - name: cargo clippy (vello_cpu - u8 pipeline)
+        if: github.event_name != 'pull_request'
         run: cargo clippy -p vello_cpu --locked --no-default-features --features std,text,png,u8_pipeline
 
       - name: cargo clippy (vello_cpu - f32 pipeline)
+        if: github.event_name != 'pull_request'
         run: cargo clippy -p vello_cpu --locked --no-default-features --features std,text,png,f32_pipeline
 
       - name: cargo clippy (auxiliary)
-        run: cargo hack clippy --workspace --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline --tests --benches --examples -- -D warnings
+        if: github.event_name != 'pull_request'
+        run: cargo hack clippy --workspace --exclude vello_bench --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline --tests --benches --examples -- -D warnings
 
-  clippy-stable-wasm:
-    name: cargo clippy (wasm32)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
+      - name: cargo clippy (benchmarks)
+        if: github.event_name != 'pull_request'
+        run: cargo clippy -p vello_bench --locked --all-targets -- -D warnings
 
-      - name: install stable toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_STABLE_VER }}
-          targets: wasm32-unknown-unknown
-          components: clippy
+      - name: cargo clippy (wasm32 pull request)
+        if: github.event_name == 'pull_request'
+        run: cargo clippy --workspace ${{ env.NO_WASM_PKGS }} --exclude vello_bench --locked --target wasm32-unknown-unknown --all-features --all-targets -- -D warnings
 
-      - name: install cargo-hack
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-hack
-
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
-
-      - name: cargo clippy (no_std)
+      - name: cargo clippy (wasm32 no_std)
+        if: github.event_name != 'pull_request'
         run: cargo hack clippy ${{ env.RUST_NO_STD_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features libm,u8_pipeline,f32_pipeline --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} -- -D warnings
 
-      - name: cargo clippy
-        run: cargo hack clippy --workspace ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline -- -D warnings
+      - name: cargo clippy (wasm32)
+        if: github.event_name != 'pull_request'
+        run: cargo hack clippy --workspace ${{ env.NO_WASM_PKGS }} --exclude vello_bench --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline -- -D warnings
 
-      - name: cargo clippy (auxiliary)
-        run: cargo hack clippy --workspace ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline --tests --benches --examples -- -D warnings
+      - name: cargo clippy (wasm32 auxiliary)
+        if: github.event_name != 'pull_request'
+        run: cargo hack clippy --workspace ${{ env.NO_WASM_PKGS }} --exclude vello_bench --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline --tests --benches --examples -- -D warnings
 
   wasm-size:
     name: Vello renderer wasm size
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -238,11 +212,6 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen@0.2.114
-
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
 
       - name: check Vello renderer wasm sizes
         run: ./vello_tests/web/check_wasm_sizes.sh
@@ -280,6 +249,9 @@ jobs:
     name: cargo test
     needs: prime-lfs-cache
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+      VELLO_CI_GPU_SUPPORT: ${{ matrix.gpu }}
     strategy:
       fail-fast: false
       matrix:
@@ -333,6 +305,7 @@ jobs:
           sudo apt install -y xvfb libegl-mesa0 libgl1-mesa-dri libxcb-xfixes0-dev mesa-vulkan-drivers
       
       - name: install cargo-nextest
+        if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
@@ -340,19 +313,32 @@ jobs:
       - name: restore cache
         uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.event_name != 'merge_group' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           cache-bin: ${{ matrix.os != 'macos-latest' }} # works around https://github.com/Swatinem/rust-cache/issues/341
 
-      - name: cargo nextest
-        # TODO: Maybe use --release; the CPU shaders are extremely slow when unoptimised
-        run: cargo nextest run --workspace --locked --all-features --no-fail-fast --release
-        env:
-          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
-          VELLO_CI_GPU_SUPPORT: ${{ matrix.gpu }}
-          # We are experimenting with git lfs, and we don't expect to run out of bandwidth.
-          # However, if we do, the tests are designed to be robust against that, if this environment variable is set.
-          # If we do run out of bandwidth, uncomment the following line and inform @DJMcNab.
-          # VELLO_SKIP_LFS_SNAPSHOTS: all
+      - name: build workspace tests
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --workspace --exclude vello_bench --exclude vello_tests --exclude vello_research_tests --locked --all-features --release --no-run
+
+      - name: build vello_tests
+        run: cargo test -p vello_tests --locked --all-features --release --test tests --no-run
+
+      - name: build research renderer tests
+        if: matrix.os != 'windows-latest'
+        run: cargo test -p vello_research_tests --locked --all-features --release --no-run
+
+      - name: run workspace tests with nextest
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo nextest run --workspace --exclude vello_bench --exclude vello_tests --exclude vello_research_tests --locked --all-features --no-fail-fast --release
+
+      # vello_tests is one large generated binary. Libtest keeps it in one process, allowing the
+      # GPU device and renderer pools to be reused and avoiding thousands of process launches.
+      - name: run vello_tests with libtest
+        run: cargo test -p vello_tests --locked --all-features --release --test tests --no-fail-fast
+
+      - name: run research renderer tests with libtest
+        if: matrix.os != 'windows-latest'
+        run: cargo test -p vello_research_tests --locked --all-features --release --no-fail-fast
       
       - name: Upload test results due to failure
         uses: actions/upload-artifact@v4
@@ -365,12 +351,18 @@ jobs:
             vello_tests/diffs
 
       - name: cargo test --doc
-        run: cargo test --doc --workspace --locked --all-features --no-fail-fast
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --doc --workspace --exclude vello_bench --locked --all-features --release --no-fail-fast
+
+      - name: check CPU allocation regressions
+        if: matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
+        run: cargo bench -p vello_bench --locked --bench allocations
 
   test-avx512:
     # Since GitHub runners don't support AVX-512, we need to run the tests with Intel SDE. This
     # setup mirrors https://github.com/linebender/fearless_simd/blob/30c7f38cd545b20ec98624bbf62d1357cd8814e3/.github/workflows/ci.yml#L222
     name: vello_tests (AVX-512)
+    if: github.event_name != 'pull_request'
     needs: prime-lfs-cache
     runs-on: ubuntu-latest
     env:
@@ -396,11 +388,6 @@ jobs:
         with:
           toolchain: ${{ env.RUST_STABLE_VER }}
 
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
-
       - name: install Intel Software Development Emulator
         run: |
           curl -fsSL -o "${SDE_PKG}-lin.tar.xz" "https://github.com/Shnatsel/intel-sde-mirror/releases/download/sde-${SDE_PKG#sde-external-}/${SDE_PKG}-lin.tar.xz"
@@ -418,19 +405,12 @@ jobs:
         run: ${SDE_PKG}-lin/sde64 -icl -- cargo test $CARGO_TEST_ARGS avx512
 
   test-stable-wasm:
-    name: cargo test (wasm32, ${{ matrix.name }})
+    name: cargo test (wasm32, default)
     needs: prime-lfs-cache
     # We use MacOS because for some reason the Ubuntu-based runners
     # have trouble handling things like `requestAnimationFrame` or
     # `setTimeout` in our testing code.
     runs-on: macos-latest
-    strategy:
-      matrix:
-        include:
-          - name: default
-            rustflags: ""
-          - name: simd128
-            rustflags: "-Ctarget-feature=+simd128"
     steps:
       - uses: actions/checkout@v6
         # We intentionally do not use lfs: true here, instead using the caching method to save LFS bandwidth.
@@ -460,10 +440,10 @@ jobs:
       - name: restore cache
         uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.event_name != 'merge_group' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
-      - name: cargo test compile
-        run: cargo test --workspace ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --all-features --no-run
+      - name: build wasm tests
+        run: cargo test -p vello_tests --locked --target wasm32-unknown-unknown --features webgl --release --no-run
 
       - name: install wasm-pack
         uses: taiki-e/install-action@v2
@@ -475,14 +455,35 @@ jobs:
         # blob, see <https://github.com/linebender/vello/pull/1078#issuecomment-3029336905>
         run: wasm-pack test --headless --chrome --features webgl --release
         working-directory: vello_tests
-        env:
-          RUSTFLAGS: ${{ matrix.rustflags }}
 
-  check-stable-wasm-webgl-examples:
-    name: cargo check (wasm32 webgl examples)
-    runs-on: ubuntu-latest
+      - name: check vello_gpu is wgpu webgl compatible
+        if: github.event_name != 'pull_request'
+        run: wasm-pack test --headless --chrome --release
+        working-directory: vello_gpu/examples/wgpu_webgl
+
+      - name: check vello_gpu is native webgl compatible
+        if: github.event_name != 'pull_request'
+        run: wasm-pack test --headless --chrome --release
+        working-directory: vello_gpu/examples/native_webgl
+
+  test-stable-wasm-simd:
+    name: cargo test (wasm32, simd128)
+    if: github.event_name != 'pull_request'
+    needs: prime-lfs-cache
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Restore lfs cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs
+          key: vello-lfs-${{ needs.prime-lfs-cache.outputs.lfs-hash }}
+          enableCrossOsArchive: true
+
+      - name: Checkout LFS files
+        run: git lfs checkout '${{ join(fromJson(env.LFS_FILES), ''' ''') }}'
+        continue-on-error: true
 
       - name: install stable toolchain
         uses: dtolnay/rust-toolchain@master
@@ -490,59 +491,101 @@ jobs:
           toolchain: ${{ env.RUST_STABLE_VER }}
           targets: wasm32-unknown-unknown
 
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
-
       - name: install wasm-pack
         uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
 
-      - name: check vello_gpu is wgpu webgl compatible
-        run: wasm-pack test --headless --chrome
-        working-directory: vello_gpu/examples/wgpu_webgl
+      - name: build vello_tests with SIMD
+        run: cargo test -p vello_tests --locked --target wasm32-unknown-unknown --features webgl --release --no-run
+        env:
+          RUSTFLAGS: -Ctarget-feature=+simd128
 
-      - name: check vello_gpu is native webgl compatible
-        run: wasm-pack test --headless --chrome
-        working-directory: vello_gpu/examples/native_webgl
+      - name: run vello_tests on Chrome with SIMD
+        run: wasm-pack test --headless --chrome --features webgl --release
+        working-directory: vello_tests
+        env:
+          RUSTFLAGS: -Ctarget-feature=+simd128
 
 
-  check-stable-android:
-    name: cargo check (aarch64-android)
+  check-msrv:
+    name: portability checks
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: '-A single-use-lifetimes'
     steps:
       - uses: actions/checkout@v6
 
-      - name: install stable toolchain
+      - name: install msrv toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_MIN_VER }}
+          targets: x86_64-unknown-none,wasm32-unknown-unknown
+
+      - name: install cargo-hack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+
+      - name: install native dependencies
+        run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libfontconfig-dev
+
+      - name: restore cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      - name: cargo check (no_std pull request)
+        if: github.event_name == 'pull_request'
+        run: cargo hack check ${{ env.RUST_NO_STD_PKGS }} --locked --no-default-features --ignore-unknown-features --features libm,u8_pipeline,f32_pipeline --target x86_64-unknown-none
+
+      - name: cargo check (pull request)
+        if: github.event_name == 'pull_request'
+        run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} --locked --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
+
+      - name: cargo check (wasm32 pull request)
+        if: github.event_name == 'pull_request'
+        run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
+
+      - name: cargo check (no_std feature powerset)
+        if: github.event_name != 'pull_request'
+        run: cargo hack check ${{ env.RUST_NO_STD_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features libm,u8_pipeline,f32_pipeline --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} --target x86_64-unknown-none
+
+      - name: cargo check (feature powerset)
+        if: github.event_name != 'pull_request'
+        run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
+
+      - name: cargo check (wasm32 feature powerset)
+        if: github.event_name != 'pull_request'
+        run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
+
+      - name: install stable Android toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE_VER }}
           targets: aarch64-linux-android
 
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
-
       - name: install cargo apk
-        run: cargo install cargo-apk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-apk
 
       - name: cargo apk check (android)
         run: cargo apk check -p with_winit --lib
         env:
-          # This is a bit of a hack, but cargo apk doesn't seem to allow customising this
+          CARGO_TARGET_DIR: ${{ runner.temp }}/vello-android-target
+          # This is a bit of a hack, but cargo apk doesn't seem to allow customising this.
           RUSTFLAGS: '-D warnings'
 
-  check-msrv:
-    name: cargo check (msrv)
+  check-msrv-platforms:
+    name: cargo check (msrv, ${{ matrix.os }})
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
     env:
       RUSTFLAGS: '-A single-use-lifetimes'
     strategy:
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v6
 
@@ -557,51 +600,15 @@ jobs:
         with:
           tool: cargo-hack
 
-      - name: install native dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libfontconfig-dev
-
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
-          cache-bin: ${{ matrix.os != 'macos-latest' }} # works around https://github.com/Swatinem/rust-cache/issues/341
-
       - name: cargo check (no_std)
         run: cargo hack check ${{ env.RUST_NO_STD_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features libm,u8_pipeline,f32_pipeline --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} --target x86_64-unknown-none
 
       - name: cargo check
         run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
 
-  check-msrv-wasm:
-    name: cargo check (msrv) (wasm32)
-    runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: '-A single-use-lifetimes'
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: install msrv toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_MIN_VER }}
-          targets: wasm32-unknown-unknown
-
-      - name: install cargo-hack
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-hack
-
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
-
-      - name: cargo check
-        run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
-
   doc:
     name: cargo doc
+    if: github.event_name != 'pull_request'
     # NOTE: We don't have any platform specific docs in this workspace, so we only run on Ubuntu.
     #       If we get per-platform docs (win/macos/linux/wasm32/..) then doc jobs should match that.
     runs-on: ubuntu-latest
@@ -614,22 +621,8 @@ jobs:
       - name: install native dependencies
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libfontconfig-dev
 
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
-
       # We test documentation using nightly to match docs.rs.
       - name: cargo doc
         run: cargo doc --workspace --locked --all-features --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: '--cfg docsrs -D warnings'
-
-  # If this fails, consider changing your text or adding something to .typos.toml.
-  typos:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: check typos
-        uses: crate-ci/typos@v1.45.0

@@ -105,7 +105,6 @@ pub fn compare_gpu_cpu_sync(scene: Scene, params: TestParams) -> Result<GpuCpuCo
 /// Run a scene comparing the outputs from the CPU and GPU renderers
 pub async fn compare_gpu_cpu(scene: Scene, mut params: TestParams) -> Result<GpuCpuComparison> {
     params.use_cpu = false;
-    // TODO: Reuse the same RenderContext?
     let gpu_rendered = render_then_debug(&scene, &params).await?;
     params.use_cpu = true;
     let cpu_rendered = render_then_debug(&scene, &params).await?;
