@@ -5,9 +5,9 @@
 #![allow(dead_code, reason = "Might be unused on platforms not supporting SIMD")]
 
 pub mod allocations;
-pub mod data;
 #[cfg(feature = "full-benchmarks")]
 pub mod allocator;
+pub mod data;
 #[cfg(feature = "full-benchmarks")]
 pub mod fine;
 #[cfg(feature = "full-benchmarks")]

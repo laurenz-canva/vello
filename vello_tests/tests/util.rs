@@ -381,7 +381,7 @@ pub(crate) fn check_ref(
     let ref_path = REFS_PATH.join(format!("{test_name}.png"));
 
     let write_ref_image = || {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "reference-generation")]
         {
             let optimized =
                 oxipng::optimize_from_memory(&encoded_image, &oxipng::Options::max_compression())
