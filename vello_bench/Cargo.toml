@@ -12,20 +12,35 @@ publish = false
 [dependencies]
 vello_common = { workspace = true }
 vello_cpu = { workspace = true }
-vello_dev_macros = { workspace = true }
-criterion = { workspace = true }
-image = { workspace = true, features = ["jpeg"] }
-parley = { version = "0.11.0", default-features = true }
-rand = { workspace = true, features = ["small_rng"] }
-smallvec = { workspace = true }
-usvg = { workspace = true }
+vello_dev_macros = { workspace = true, optional = true }
+criterion = { workspace = true, optional = true }
+image = { workspace = true, features = ["jpeg"], optional = true }
+parley = { version = "0.11.0", default-features = true, optional = true }
+rand = { workspace = true, features = ["small_rng"], optional = true }
+smallvec = { workspace = true, optional = true }
+# The allocation regression only parses a path-only SVG. Text and system-font support remain
+# enabled by the full-benchmarks feature for the general benchmark suite.
+usvg = { version = "0.47", default-features = false }
 
 [features]
-extended = []
+default = ["full-benchmarks"]
+full-benchmarks = [
+    "dep:criterion",
+    "dep:image",
+    "dep:parley",
+    "dep:rand",
+    "dep:smallvec",
+    "dep:vello_dev_macros",
+    "usvg/memmap-fonts",
+    "usvg/system-fonts",
+    "usvg/text",
+]
+extended = ["full-benchmarks"]
 
 [[bench]]
 name = "main"
 harness = false
+required-features = ["full-benchmarks"]
 
 [[bench]]
 name = "allocations"
