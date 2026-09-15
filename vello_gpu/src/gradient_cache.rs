@@ -292,7 +292,9 @@ mod tests {
     use vello_common::color::{ColorSpaceTag, DynamicColor, HueDirection};
     use vello_common::encode::{EncodeExt, EncodedPaint};
     use vello_common::kurbo::{Affine, Point};
-    use vello_common::peniko::{Color, ColorStop, ColorStops, Gradient, LinearGradientPosition};
+    use vello_common::peniko::{
+        Color, ColorStop, ColorStops, Gradient, InterpolationAlphaSpace, LinearGradientPosition,
+    };
 
     fn insert_entries(cache: &mut GradientRampCache, count: usize) {
         for i in 0..count {
@@ -367,6 +369,32 @@ mod tests {
         assert_eq!(cache.cache.len(), 4);
         assert!(!cache.is_empty());
         assert!(cache.has_changed());
+    }
+
+    #[test]
+    fn test_alpha_interpolation_space_is_part_of_cache_key() {
+        let mut gradient = create_gradient(0.5);
+        gradient.stops = ColorStops(
+            vec![
+                ColorStop {
+                    offset: 0.0,
+                    color: Color::from_rgba8(255, 255, 0, 0).into(),
+                },
+                ColorStop {
+                    offset: 1.0,
+                    color: Color::from_rgba8(0, 0, 255, 255).into(),
+                },
+            ]
+            .into(),
+        );
+        let mut unpremultiplied = gradient.clone();
+        unpremultiplied.interpolation_alpha_space = InterpolationAlphaSpace::Unpremultiplied;
+
+        let mut cache = GradientRampCache::new(5, Level::baseline());
+        insert_entry(&mut cache, gradient);
+        insert_entry(&mut cache, unpremultiplied);
+
+        assert_eq!(cache.cache.len(), 2);
     }
 
     #[test]

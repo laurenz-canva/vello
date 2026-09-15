@@ -442,9 +442,6 @@ jobs:
         with:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
-      - name: build wasm tests
-        run: cargo test -p vello_tests --locked --target wasm32-unknown-unknown --features webgl --release --no-run
-
       - name: install wasm-pack
         uses: taiki-e/install-action@v2
         with:
@@ -471,6 +468,8 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: prime-lfs-cache
     runs-on: macos-latest
+    env:
+      RUSTFLAGS: -Ctarget-feature=+simd128
     steps:
       - uses: actions/checkout@v6
 
@@ -491,21 +490,19 @@ jobs:
           toolchain: ${{ env.RUST_STABLE_VER }}
           targets: wasm32-unknown-unknown
 
+      - name: restore cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
       - name: install wasm-pack
         uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
 
-      - name: build vello_tests with SIMD
-        run: cargo test -p vello_tests --locked --target wasm32-unknown-unknown --features webgl --release --no-run
-        env:
-          RUSTFLAGS: -Ctarget-feature=+simd128
-
       - name: run vello_tests on Chrome with SIMD
         run: wasm-pack test --headless --chrome --features webgl --release
         working-directory: vello_tests
-        env:
-          RUSTFLAGS: -Ctarget-feature=+simd128
 
 
   check-msrv:

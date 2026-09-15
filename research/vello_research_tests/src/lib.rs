@@ -151,6 +151,11 @@ pub async fn get_scene_image(
             renderer.use_cpu == params.use_cpu && renderer.anti_aliasing == params.anti_aliasing
         })
         .map(|index| render_pool.renderers.swap_remove(index));
+    let pooled_target = render_pool
+        .targets
+        .iter()
+        .position(|target| target.width == params.width && target.height == params.height)
+        .map(|index| render_pool.targets.swap_remove(index));
     let device_handle = &render_pool.context.devices[render_pool.device_id];
     let device = &device_handle.device;
     let queue = &device_handle.queue;
@@ -172,12 +177,8 @@ pub async fn get_scene_image(
             .or_else(|_| bail!("Got non-Send/Sync error from creating renderer"))?,
         }
     };
-    let pooled_target = render_pool
-        .targets
-        .iter()
-        .position(|target| target.width == params.width && target.height == params.height)
-        .map(|index| render_pool.targets.swap_remove(index))
-        .unwrap_or_else(|| create_pooled_target(device, params.width, params.height));
+    let pooled_target =
+        pooled_target.unwrap_or_else(|| create_pooled_target(device, params.width, params.height));
     let image = render_scene_image(
         device,
         queue,

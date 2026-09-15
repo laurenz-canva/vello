@@ -6,10 +6,10 @@ use std::cell::RefCell;
 #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
 use std::collections::HashMap;
 use std::sync::Arc;
-#[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
-use std::sync::{Mutex, MutexGuard};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
+#[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
+use std::sync::{Mutex, MutexGuard};
 
 use glifo::GlyphRunBackend;
 use vello_common::color::{AlphaColor, Srgb};
@@ -28,7 +28,7 @@ use vello_gpu::{
     Scene, TargetInit as HybridTargetInit, TextureId,
 };
 #[cfg(all(target_arch = "wasm32", feature = "webgl"))]
-use web_sys::WebGl2RenderingContext;
+use web_sys::{HtmlCanvasElement, WebGl2RenderingContext};
 
 pub(crate) trait Renderer: Sized {
     type GlyphRunBackend<'a>: GlyphRunBackend<'a>
@@ -411,8 +411,7 @@ impl HybridRenderer {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::COPY_SRC,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                     view_formats: &[],
                 });
                 let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -832,6 +831,7 @@ struct PooledWebGlRenderer {
     width: u16,
     height: u16,
     use_depth_buffer: bool,
+    canvas: HtmlCanvasElement,
     resources: HybridResources,
     renderer: vello_gpu::WebGlRenderer,
     gl: WebGl2RenderingContext,
@@ -900,7 +900,6 @@ impl Renderer for HybridRenderer {
         use_depth_buffer: bool,
     ) -> Self {
         use wasm_bindgen::JsCast;
-        use web_sys::HtmlCanvasElement;
 
         if num_threads != 0 {
             panic!("hybrid renderer doesn't support multi-threading");
@@ -914,16 +913,15 @@ impl Renderer for HybridRenderer {
         // See the comment above for why we change the `min_texture_size`.
         settings.memory_settings.layers_config.min_texture_size = vello_gpu::SizeU16::new(100);
         let scene = Scene::new_with(width, height, settings.level);
-        let pooled = WEBGL_RENDERER_POOL
+        let mut pooled = WEBGL_RENDERER_POOL
             .with(|renderers| {
                 let mut renderers = renderers.borrow_mut();
                 renderers
                     .iter()
-                    .position(|renderer| {
-                        renderer.width == width
-                            && renderer.height == height
-                            && renderer.use_depth_buffer == use_depth_buffer
-                    })
+                    // Keep the number of live WebGL contexts bounded. Browsers generally allow
+                    // only a small number, so retaining one per test size eventually loses older
+                    // contexts and makes the remaining tests render blank images.
+                    .position(|renderer| renderer.use_depth_buffer == use_depth_buffer)
                     .map(|index| renderers.swap_remove(index))
             })
             .unwrap_or_else(|| {
@@ -937,12 +935,9 @@ impl Renderer for HybridRenderer {
                     .unwrap();
                 canvas.set_width(width.into());
                 canvas.set_height(height.into());
-                let (renderer, resources) = vello_gpu::WebGlRenderer::new_with(
-                    &canvas,
-                    settings,
-                    use_depth_buffer,
-                )
-                .unwrap();
+                let (renderer, resources) =
+                    vello_gpu::WebGlRenderer::new_with(&canvas, settings, use_depth_buffer)
+                        .unwrap();
                 let gl = canvas
                     .get_context("webgl2")
                     .unwrap()
@@ -953,11 +948,18 @@ impl Renderer for HybridRenderer {
                     width,
                     height,
                     use_depth_buffer,
+                    canvas,
                     resources,
                     renderer,
                     gl,
                 }
             });
+        if pooled.width != width || pooled.height != height {
+            pooled.canvas.set_width(width.into());
+            pooled.canvas.set_height(height.into());
+            pooled.width = width;
+            pooled.height = height;
+        }
         Self {
             scene,
             pooled: Some(pooled),
@@ -1164,21 +1166,19 @@ impl Renderer for HybridRenderer {
 
         let gl = &self.pooled.as_ref().unwrap().gl;
         let texture = gl.create_texture().unwrap();
-        gl
-            .bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
-        gl
-            .tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
-                WebGl2RenderingContext::TEXTURE_2D,
-                0,
-                WebGl2RenderingContext::RGBA8 as i32,
-                pixmap.width().into(),
-                pixmap.height().into(),
-                0,
-                WebGl2RenderingContext::RGBA,
-                WebGl2RenderingContext::UNSIGNED_BYTE,
-                Some(pixmap.data_as_u8_slice()),
-            )
-            .unwrap();
+        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
+        gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+            WebGl2RenderingContext::TEXTURE_2D,
+            0,
+            WebGl2RenderingContext::RGBA8 as i32,
+            pixmap.width().into(),
+            pixmap.height().into(),
+            0,
+            WebGl2RenderingContext::RGBA,
+            WebGl2RenderingContext::UNSIGNED_BYTE,
+            Some(pixmap.data_as_u8_slice()),
+        )
+        .unwrap();
         // `texelFetch` requires a complete texture, which a texture without mipmaps only is once
         // its minification filter no longer samples mipmaps.
         for (param, value) in [
