@@ -27,4 +27,9 @@ nv-flip = "0.1.2"
 image = { workspace = true, features = ["png"] }
 
 scenes = { workspace = true }
-oxipng = { workspace = true, features = ["freestanding", "parallel"] }
+oxipng = { workspace = true, features = ["freestanding", "parallel"], optional = true }
+
+[features]
+# Snapshot updates use maximum PNG compression, but ordinary comparisons and CI failure images do
+# not need the additional compression dependency graph.
+snapshot-compression = ["dep:oxipng"]

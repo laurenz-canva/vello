@@ -311,16 +311,24 @@ pub fn write_png_to_file(
     }
     let width = params.width;
     let height = params.height;
-    let mut data = Vec::new();
-    let mut encoder = png::Encoder::new(&mut data, width, height);
+    let mut encoded = Vec::new();
+    let mut encoder = png::Encoder::new(&mut encoded, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header()?;
     writer.write_image_data(image.data.data())?;
     writer.finish()?;
-    if optimise {
-        data = oxipng::optimize_from_memory(&data, &oxipng::Options::max_compression()).unwrap();
-    }
+    #[cfg(feature = "snapshot-compression")]
+    let data = if optimise {
+        oxipng::optimize_from_memory(&encoded, &oxipng::Options::max_compression()).unwrap()
+    } else {
+        encoded
+    };
+    #[cfg(not(feature = "snapshot-compression"))]
+    let data = {
+        let _ = optimise;
+        encoded
+    };
 
     let size = data.len();
     std::fs::write(out_path, &data)?;

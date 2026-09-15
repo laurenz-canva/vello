@@ -388,9 +388,9 @@ pub(crate) fn check_ref(
                     .unwrap();
             std::fs::write(&ref_path, optimized).unwrap();
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(not(feature = "reference-generation"))]
         {
-            panic("Reference images cannot be created from WASM");
+            std::fs::write(&ref_path, &encoded_image).unwrap();
         }
     };
 
