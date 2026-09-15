@@ -37,7 +37,9 @@ env:
 # We use cargo-nextest for the regular workspace test binaries. The large generated vello_tests
 # binary deliberately uses libtest instead: nextest's process-per-test isolation prevents its GPU
 # fixture from being reused and is particularly expensive on Windows and macOS.
-# Cargo-nextest does not support running doc tests, so we also have a cargo test --doc step.
+# Cargo-nextest does not support running doc tests, so we also use cargo test --doc. Keep its
+# package and feature selections aligned with the preceding release builds: a workspace-wide
+# all-features invocation would build examples and opt into maintenance-only dependencies again.
 # For more information see https://github.com/nextest-rs/nextest/issues/16
 #
 # The MSRV jobs run only cargo check because different clippy versions can disagree on goals and
@@ -318,7 +320,12 @@ jobs:
 
       - name: cargo test --doc
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --doc --workspace --exclude vello_bench --locked --all-features --release --no-fail-fast
+        run: |
+          # Reuse the all-feature release artifacts from `build workspace tests`.
+          cargo test --doc ${{ env.WORKSPACE_TEST_PKGS }} --locked --all-features --release --no-fail-fast
+          # These public research crates were built with default features as dependencies of
+          # vello_research_tests, so keep them separate from the all-feature invocation above.
+          cargo test --doc -p vello -p vello_shaders --locked --release --no-fail-fast
 
       - name: check CPU allocation regressions
         if: matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
