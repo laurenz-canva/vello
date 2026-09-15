@@ -467,8 +467,14 @@ jobs:
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
 
-      - name: cargo test compile
+      - name: compile workspace tests
         run: cargo test --workspace ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --all-features --no-run
+
+      - name: build vello_tests browser tests
+        run: cargo test --locked --target wasm32-unknown-unknown --features webgl --release --no-run
+        working-directory: vello_tests
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
 
       - name: install wasm-pack
         uses: taiki-e/install-action@v2
