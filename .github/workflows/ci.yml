@@ -483,6 +483,16 @@ jobs:
         with:
           tool: wasm-pack
 
+      - name: check vello_gpu is wgpu webgl compatible
+        if: matrix.name == 'default'
+        run: wasm-pack test --headless --chrome
+        working-directory: vello_gpu/examples/wgpu_webgl
+
+      - name: check vello_gpu is native webgl compatible
+        if: matrix.name == 'default'
+        run: wasm-pack test --headless --chrome
+        working-directory: vello_gpu/examples/native_webgl
+
       - name: Run vello_tests on Chrome
         # We need to run in release mode, because otherwise wasm_parser can't read the
         # blob, see <https://github.com/linebender/vello/pull/1078#issuecomment-3029336905>
@@ -490,37 +500,6 @@ jobs:
         working-directory: vello_tests
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-
-  check-stable-wasm-webgl-examples:
-    name: cargo check (wasm32 webgl examples)
-    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: install stable toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_STABLE_VER }}
-          targets: wasm32-unknown-unknown
-
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-
-      - name: install wasm-pack
-        uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-pack
-
-      - name: check vello_gpu is wgpu webgl compatible
-        run: wasm-pack test --headless --chrome
-        working-directory: vello_gpu/examples/wgpu_webgl
-
-      - name: check vello_gpu is native webgl compatible
-        run: wasm-pack test --headless --chrome
-        working-directory: vello_gpu/examples/native_webgl
 
   check-stable-android:
     name: cargo check (aarch64-android)
@@ -545,7 +524,7 @@ jobs:
           RUSTFLAGS: '-D warnings'
 
   check-msrv:
-    name: cargo check (msrv, ${{ matrix.os }})
+    name: cargo check (msrv, native)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     env:
@@ -583,7 +562,7 @@ jobs:
         run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
 
   check-msrv-wasm:
-    name: cargo check (msrv) (wasm32)
+    name: cargo check (msrv, wasm32)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
