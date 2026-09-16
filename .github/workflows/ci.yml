@@ -546,13 +546,14 @@ jobs:
 
   check-msrv:
     name: cargo check (msrv, ${{ matrix.os }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     env:
       RUSTFLAGS: '-A single-use-lifetimes'
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["windows-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v6
 
@@ -574,12 +575,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libfontconfig-dev
 
-      - name: restore cache
-        if: matrix.os == 'ubuntu-latest'
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-
       - name: cargo check (no_std)
         if: matrix.os == 'ubuntu-latest'
         run: cargo hack check ${{ env.RUST_NO_STD_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features libm,u8_pipeline,f32_pipeline --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} --target x86_64-unknown-none
@@ -589,7 +584,7 @@ jobs:
 
   check-msrv-wasm:
     name: cargo check (msrv) (wasm32)
-    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: '-A single-use-lifetimes'
@@ -606,11 +601,6 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-hack
-
-      - name: restore cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: cargo check
         run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
