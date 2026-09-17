@@ -503,18 +503,18 @@ jobs:
 
       - name: check vello_gpu is wgpu webgl compatible
         if: matrix.name == 'default'
-        run: wasm-pack test --headless --chrome --mode no-install
+        run: wasm-pack test --mode no-install --headless --chrome
         working-directory: vello_gpu/examples/wgpu_webgl
 
       - name: check vello_gpu is native webgl compatible
         if: matrix.name == 'default'
-        run: wasm-pack test --headless --chrome --mode no-install
+        run: wasm-pack test --mode no-install --headless --chrome
         working-directory: vello_gpu/examples/native_webgl
 
       - name: Run vello_tests on Chrome
         # We need to run in release mode, because otherwise wasm_parser can't read the
         # blob, see <https://github.com/linebender/vello/pull/1078#issuecomment-3029336905>
-        run: wasm-pack test --headless --chrome --features webgl --release --mode no-install
+        run: wasm-pack test --mode no-install --headless --chrome --features webgl --release
         working-directory: vello_tests
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
