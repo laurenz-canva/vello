@@ -362,7 +362,22 @@ jobs:
           cache-bin: ${{ matrix.os != 'macos-latest' }} # works around https://github.com/Swatinem/rust-cache/issues/341
 
       - name: build tests
-        run: cargo nextest run --workspace --locked --all-features --release --no-run
+        shell: pwsh
+        run: |
+          cargo nextest run --workspace --locked --all-features --release --no-run --timings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $report = Get-Content "target/cargo-timings/cargo-timing.html" -Raw
+          $json = [regex]::Match($report, 'const UNIT_DATA = (?<json>\[[\s\S]*?\]);').Groups['json'].Value
+          $units = $json | ConvertFrom-Json
+          $workspaceCrates = (cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json).packages.name
+          $units |
+            Where-Object { $_.name -in $workspaceCrates } |
+            Sort-Object duration -Descending |
+            Select-Object `
+              @{ Name = 'Seconds'; Expression = { [math]::Round($_.duration, 1) } }, `
+              name, version, mode, target |
+            Format-Table -AutoSize
         env:
           CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
           VELLO_CI_GPU_SUPPORT: ${{ matrix.gpu }}
