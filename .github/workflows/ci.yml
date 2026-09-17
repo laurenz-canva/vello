@@ -388,6 +388,7 @@ jobs:
             vello_tests/diffs
 
       - name: cargo test --doc
+        if: matrix.os == 'ubuntu-latest'
         run: cargo test --doc --workspace --locked --all-features --no-fail-fast
 
   test-avx512:
