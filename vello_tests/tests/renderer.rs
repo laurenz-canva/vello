@@ -788,7 +788,7 @@ impl HybridRenderer {
         if self.canvas.height() != u32::from(height) {
             self.canvas.set_height(height.into());
         }
-        self.scene.reset_and_resize(width, height);
+        self.scene = Scene::new(width, height);
         self.external_textures = vello_gpu::WebGlTextureBindings::new();
         self.next_external_texture_id = 1;
         self.clear_color = AlphaColor::TRANSPARENT;

@@ -228,8 +228,11 @@ pub(crate) fn with_webgl_ctx<R>(
         use_depth_buffer: bool,
         f: impl FnOnce(&mut HybridRenderer) -> R,
     ) -> R {
-        let mut slot = slot.borrow_mut();
-        let ctx = slot.get_or_insert_with(|| {
+        let cached_ctx = {
+            let mut slot = slot.borrow_mut();
+            slot.take()
+        };
+        let mut ctx = cached_ctx.unwrap_or_else(|| {
             get_ctx_with_depth_buffer::<HybridRenderer>(
                 width,
                 height,
@@ -248,7 +251,9 @@ pub(crate) fn with_webgl_ctx<R>(
             ctx.fill_path(&path);
         }
 
-        f(ctx)
+        let result = f(&mut ctx);
+        slot.replace(Some(ctx));
+        result
     }
 
     if use_depth_buffer {
