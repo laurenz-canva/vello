@@ -150,6 +150,15 @@ impl CpuLevel {
         }
     }
 
+    fn dispatch_cfg_attribute(self) -> TokenStream2 {
+        match self {
+            Self::Sse42 => quote! { #[cfg(not(disable_dispatch_sse4_2))] },
+            Self::Avx2 => quote! { #[cfg(not(disable_dispatch_avx2))] },
+            Self::Avx512 => quote! { #[cfg(not(disable_dispatch_avx512))] },
+            Self::Scalar | Self::Neon | Self::Sse2 | Self::Wasm => quote! {},
+        }
+    }
+
     fn tolerance(self, scalar: u8, simd: u8) -> TokenStream2 {
         match self {
             Self::Scalar => quote! { #scalar },
@@ -444,6 +453,7 @@ impl TestContext<'_> {
                 let (pipeline, level, num_threads) = variant.config();
                 let render_mode = pipeline.render_mode();
                 let is_wasm = matches!(level, CpuLevel::Wasm);
+                let dispatch_cfg_attribute = level.dispatch_cfg_attribute();
                 let requires_fallback = matches!(
                     variant,
                     CpuVariant::Pipeline {
@@ -452,7 +462,7 @@ impl TestContext<'_> {
                     } | CpuVariant::Multithreaded
                 );
                 let level = level.value();
-                let attributes = if is_wasm {
+                let (target_cfg_attribute, test_attribute) = if is_wasm {
                     assert_eq!(num_threads, 0, "wasm is single threaded");
                     is_reference = false;
                     (
@@ -468,8 +478,11 @@ impl TestContext<'_> {
                     (quote! {}, quote! { #[test] })
                 };
                 (
-                    attributes.0,
-                    attributes.1,
+                    quote! {
+                        #dispatch_cfg_attribute
+                        #target_cfg_attribute
+                    },
+                    test_attribute,
                     quote! {},
                     quote! {
                         crate::util::get_ctx::<crate::renderer::CpuRenderer>(

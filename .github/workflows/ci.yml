@@ -527,7 +527,8 @@ jobs:
       - name: Run vello_tests on Chrome
         # We need to run in release mode, because otherwise wasm_parser can't read the
         # blob, see <https://github.com/linebender/vello/pull/1078#issuecomment-3029336905>
-        run: wasm-pack test --mode no-install --headless --chrome --features webgl --release
+        # Temporarily omit the WebGL tests to measure their impact on the job runtime.
+        run: wasm-pack test --mode no-install --headless --chrome --release
         working-directory: vello_tests
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
