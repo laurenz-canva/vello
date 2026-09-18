@@ -779,6 +779,43 @@ impl HybridRenderer {
             .upload_image(&mut self.resources, pixmap)
             .unwrap()
     }
+
+    pub(crate) fn renderer_info(&self) -> String {
+        const UNMASKED_VENDOR_WEBGL: u32 = 0x9245;
+        const UNMASKED_RENDERER_WEBGL: u32 = 0x9246;
+
+        let has_debug_info = self
+            .gl
+            .get_extension("WEBGL_debug_renderer_info")
+            .ok()
+            .flatten()
+            .is_some();
+        let (vendor_parameter, renderer_parameter) = if has_debug_info {
+            (UNMASKED_VENDOR_WEBGL, UNMASKED_RENDERER_WEBGL)
+        } else {
+            (
+                WebGl2RenderingContext::VENDOR,
+                WebGl2RenderingContext::RENDERER,
+            )
+        };
+        let parameter = |name| {
+            self.gl
+                .get_parameter(name)
+                .ok()
+                .and_then(|value| value.as_string())
+                .unwrap_or_else(|| "unknown".to_owned())
+        };
+
+        format!(
+            "vendor={}, renderer={}",
+            parameter(vendor_parameter),
+            parameter(renderer_parameter)
+        )
+    }
+
+    pub(crate) fn finish(&self) {
+        self.gl.finish();
+    }
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "webgl"))]

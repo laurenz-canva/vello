@@ -533,6 +533,11 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
 
+      - name: Profile WebGL test phases
+        if: matrix.name == 'default'
+        run: wasm-pack test --mode no-install --headless --chrome --features webgl --release . webgl_profile
+        working-directory: vello_tests
+
   test-wgpu-webgl:
     name: cargo test (wgpu WebGL)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
