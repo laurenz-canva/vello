@@ -535,7 +535,7 @@ jobs:
 
       - name: Profile WebGL test phases
         if: matrix.name == 'default'
-        run: wasm-pack test --mode no-install --headless --chrome --features webgl_profile --test webgl_profile --release
+        run: wasm-pack test --mode no-install --headless --chrome --features webgl_profile --test webgl_profile --release -- --nocapture
         working-directory: vello_tests
 
   test-wgpu-webgl:
