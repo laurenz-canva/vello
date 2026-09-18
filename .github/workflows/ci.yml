@@ -305,12 +305,18 @@ jobs:
         include:
           - os: ubuntu-latest
             gpu: 'yes'
+            packages: --workspace
+            rustflags: ''
           - os: macos-latest
             gpu: 'yes'
+            packages: -p vello_tests -p vello_research_tests
+            rustflags: ''
           - os: windows-latest
             # TODO: The windows runners theoretically have CPU fallback for GPUs, but
             # this failed in initial testing
             gpu: 'no'
+            packages: -p vello_tests -p vello_research_tests
+            rustflags: --cfg disable_dispatch_sse4_2 --cfg disable_dispatch_avx2 --cfg disable_dispatch_avx512
     steps:
       - uses: actions/checkout@v6
         # We intentionally do not use lfs: true here, instead using the caching method to save LFS bandwidth.
@@ -364,7 +370,7 @@ jobs:
       - name: build tests
         shell: pwsh
         run: |
-          cargo nextest run --workspace --locked --all-features --release --no-run --timings
+          cargo nextest run ${{ matrix.packages }} --locked --all-features --release --no-run --timings
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           $report = Get-Content "target/cargo-timings/cargo-timing.html" -Raw
@@ -380,12 +386,14 @@ jobs:
             Format-Table -AutoSize
         env:
           CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+          RUSTFLAGS: ${{ matrix.rustflags }}
           VELLO_CI_GPU_SUPPORT: ${{ matrix.gpu }}
 
       - name: run tests
-        run: cargo nextest run --workspace --locked --all-features --no-fail-fast --release
+        run: cargo nextest run ${{ matrix.packages }} --locked --all-features --no-fail-fast --release
         env:
           CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+          RUSTFLAGS: ${{ matrix.rustflags }}
           VELLO_CI_GPU_SUPPORT: ${{ matrix.gpu }}
           # We are experimenting with git lfs, and we don't expect to run out of bandwidth.
           # However, if we do, the tests are designed to be robust against that, if this environment variable is set.
