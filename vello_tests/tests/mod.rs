@@ -51,8 +51,6 @@ mod opacity;
 mod renderer;
 mod scenes;
 mod target;
-#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
-mod webgl_profile;
 #[macro_use]
 mod util;
 #[cfg(target_arch = "wasm32")]

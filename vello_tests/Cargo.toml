@@ -14,6 +14,11 @@ autotests = false
 name = "tests"
 path = "tests/mod.rs"
 
+[[test]]
+name = "webgl_profile"
+path = "tests/webgl_profile_main.rs"
+required-features = ["webgl_profile"]
+
 [[bin]]
 name = "regenerate_probe_reference"
 path = "src/regenerate_probe_reference.rs"
@@ -63,6 +68,7 @@ wasmparser = "0.235.0"
 default = ["force_support_fallback"]
 force_support_fallback = ["fearless_simd/force_support_fallback"]
 webgl = ["vello_gpu/webgl", "vello_gpu/probe"]
+webgl_profile = ["webgl"]
 
 [lints]
 workspace = true
