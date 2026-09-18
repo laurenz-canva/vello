@@ -444,6 +444,13 @@ impl TestContext<'_> {
                 let (pipeline, level, num_threads) = variant.config();
                 let render_mode = pipeline.render_mode();
                 let is_wasm = matches!(level, CpuLevel::Wasm);
+                let requires_fallback = matches!(
+                    variant,
+                    CpuVariant::Pipeline {
+                        level: CpuLevel::Scalar,
+                        ..
+                    }
+                );
                 let level = level.value();
                 let attributes = if is_wasm {
                     assert_eq!(num_threads, 0, "wasm is single threaded");
@@ -451,6 +458,11 @@ impl TestContext<'_> {
                     (
                         quote! { #[cfg(target_arch = "wasm32")] },
                         quote! { #[wasm_bindgen_test::wasm_bindgen_test] },
+                    )
+                } else if requires_fallback {
+                    (
+                        quote! { #[cfg(feature = "force_support_fallback")] },
+                        quote! { #[test] },
                     )
                 } else {
                     (quote! {}, quote! { #[test] })
