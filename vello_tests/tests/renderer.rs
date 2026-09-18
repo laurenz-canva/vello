@@ -436,15 +436,12 @@ impl Renderer for HybridRenderer {
         width: u16,
         height: u16,
         num_threads: u16,
-        level: Level,
+        _level: Level,
         _: RenderMode,
         use_depth_buffer: bool,
     ) -> Self {
         if num_threads != 0 {
             panic!("hybrid renderer doesn't support multi-threading");
-        }
-        if !level.is_fallback() {
-            panic!("hybrid renderer doesn't support SIMD");
         }
         let mut settings = HybridRenderSettings::default();
         // Most of the tests are 100x100 by default, and we want to make sure that some visual
@@ -803,7 +800,7 @@ impl Renderer for HybridRenderer {
         width: u16,
         height: u16,
         num_threads: u16,
-        level: Level,
+        _level: Level,
         _: RenderMode,
         use_depth_buffer: bool,
     ) -> Self {
@@ -812,10 +809,6 @@ impl Renderer for HybridRenderer {
 
         if num_threads != 0 {
             panic!("hybrid renderer doesn't support multi-threading");
-        }
-
-        if !level.is_fallback() {
-            panic!("hybrid renderer doesn't support SIMD");
         }
 
         let mut settings = HybridRenderSettings::default();
