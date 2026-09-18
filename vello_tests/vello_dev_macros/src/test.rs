@@ -449,7 +449,7 @@ impl TestContext<'_> {
                     CpuVariant::Pipeline {
                         level: CpuLevel::Scalar,
                         ..
-                    }
+                    } | CpuVariant::Multithreaded
                 );
                 let level = level.value();
                 let attributes = if is_wasm {
