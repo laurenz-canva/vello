@@ -10,9 +10,9 @@ env:
   # plus all the README.md files of the affected packages.
   # Remove the MSRV jobs' single-use-lifetimes allowance once this is at least 1.97.
   RUST_MIN_VER: "1.89"
-  # List of packages that will be checked with the minimum supported Rust version.
-  # This should be limited to packages that are intended for publishing.
-  RUST_MIN_VER_PKGS: "-p vello -p vello_encoding -p vello_shaders -p vello_common -p vello_cpu -p vello_gpu -p glifo"
+  # List of packages that are intended for publishing. These are checked against the minimum
+  # supported Rust version and across their feature combinations.
+  PUBLISHED_PKGS: "-p vello -p vello_encoding -p vello_shaders -p vello_common -p vello_cpu -p vello_gpu -p glifo"
   # List of packages that will be checked for `no_std` builds.
   # This should be limited to packages that are intended for publishing.
   RUST_NO_STD_PKGS: "-p vello_common -p vello_cpu -p glifo"
@@ -27,21 +27,9 @@ env:
 
 # Rationale
 #
-# We don't run clippy with --all-targets because then even --lib and --bins are compiled with
-# dev dependencies enabled, which does not match how they would be compiled by users.
-# A dev dependency might enable a feature that we need for a regular dependency,
-# and checking with --all-targets would not find our feature requirements lacking.
-# This problem still applies to cargo resolver version 2.
-# Thus we split all the targets into two steps, one with --lib --bins
-# and another with --tests --benches --examples.
-# Also, we can't give --lib --bins explicitly because then cargo will error on binary-only packages.
-# Luckily the default behavior of cargo with no explicit targets is the same but without the error.
-#
-# We use cargo-hack for a similar reason. Cargo's --workspace will do feature unification across
-# the whole workspace. While cargo-hack will instead check each workspace package separately.
-#
-# Using cargo-hack also allows us to more easily test the feature matrix of our packages.
-# We use --each-feature & --optional-deps which will run a separate check for every feature.
+# Clippy checks all targets in one maximal workspace configuration. The scheduled MSRV jobs use
+# cargo-hack to check each published package independently, both one feature at a time and with all
+# features enabled. This avoids repeating the full feature matrix for tests, examples and tools.
 #
 # The MSRV jobs run only cargo check because different clippy versions can disagree on goals and
 # running tests introduces dev dependencies which may require a higher MSRV than the bare package.
@@ -171,6 +159,7 @@ jobs:
         run: rustup target add x86_64-unknown-none
 
       - name: install cargo-hack
+        if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-hack
@@ -190,16 +179,15 @@ jobs:
         run: cargo hack clippy ${{ env.RUST_NO_STD_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features libm,u8_pipeline,f32_pipeline --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} --target x86_64-unknown-none -- -D warnings
 
       - name: cargo clippy
-        run: cargo hack clippy --workspace --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
 
       - name: cargo clippy (vello_cpu - u8 pipeline)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo clippy -p vello_cpu --locked --no-default-features --features std,text,png,u8_pipeline
 
       - name: cargo clippy (vello_cpu - f32 pipeline)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo clippy -p vello_cpu --locked --no-default-features --features std,text,png,f32_pipeline
-
-      - name: cargo clippy (auxiliary)
-        run: cargo hack clippy --workspace --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline --tests --benches --examples -- -D warnings
 
   clippy-stable-wasm:
     name: cargo clippy (wasm32)
@@ -215,24 +203,16 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
 
-      - name: install cargo-hack
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-hack
-
       - name: restore cache
         uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
-      - name: cargo clippy (no_std)
-        run: cargo hack clippy ${{ env.RUST_NO_STD_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features libm,u8_pipeline,f32_pipeline --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} -- -D warnings
+      - name: cargo clippy (published packages)
+        run: cargo clippy ${{ env.PUBLISHED_PKGS }} --locked --target wasm32-unknown-unknown -- -D warnings
 
-      - name: cargo clippy
-        run: cargo hack clippy --workspace ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline -- -D warnings
-
-      - name: cargo clippy (auxiliary)
-        run: cargo hack clippy --workspace ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline --tests --benches --examples -- -D warnings
+      - name: cargo clippy (all targets)
+        run: cargo clippy --workspace ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --all-targets --all-features -- -D warnings
 
   wasm-size:
     name: Vello renderer wasm size
@@ -597,6 +577,7 @@ jobs:
         run: rustup target add x86_64-unknown-none
 
       - name: install cargo-hack
+        if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-hack
@@ -609,8 +590,13 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo hack check ${{ env.RUST_NO_STD_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features libm,u8_pipeline,f32_pipeline --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} --target x86_64-unknown-none
 
-      - name: cargo check
-        run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
+      - name: cargo check (published feature matrix)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo hack check ${{ env.PUBLISHED_PKGS }} --locked --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
+
+      - name: cargo check (published packages)
+        if: matrix.os != 'ubuntu-latest'
+        run: cargo check ${{ env.PUBLISHED_PKGS }} --locked --all-features
 
   check-msrv-wasm:
     name: cargo check (msrv, wasm32)
@@ -633,7 +619,7 @@ jobs:
           tool: cargo-hack
 
       - name: cargo check
-        run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} ${{ env.NO_WASM_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
+        run: cargo hack check ${{ env.PUBLISHED_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std,u8_pipeline,f32_pipeline
 
   notify-scheduled-failure:
     name: notify scheduled CI failure
