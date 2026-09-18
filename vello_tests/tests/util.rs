@@ -3,6 +3,8 @@
 
 //! Utility functions shared across different tests.
 
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+use crate::renderer::HybridRenderer;
 use crate::renderer::Renderer;
 use glifo::Glyph;
 use image::{Rgba, RgbaImage, load_from_memory};
@@ -10,6 +12,8 @@ use serde::Serializer;
 use skrifa::MetadataProvider;
 use skrifa::raw::FileRef;
 use smallvec::smallvec;
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+use std::cell::RefCell;
 use std::cmp::max;
 use std::sync::Arc;
 use vello_common::color::DynamicColor;
@@ -200,6 +204,58 @@ pub(crate) fn get_ctx_with_depth_buffer<T: Renderer>(
     }
 
     ctx
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+thread_local! {
+    static WEBGL_RENDERER: RefCell<Option<HybridRenderer>> = const { RefCell::new(None) };
+    static WEBGL_RENDERER_NO_DEPTH: RefCell<Option<HybridRenderer>> = const { RefCell::new(None) };
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+pub(crate) fn with_webgl_ctx<R>(
+    width: u16,
+    height: u16,
+    transparent: bool,
+    use_depth_buffer: bool,
+    f: impl FnOnce(&mut HybridRenderer) -> R,
+) -> R {
+    fn run<R>(
+        slot: &RefCell<Option<HybridRenderer>>,
+        width: u16,
+        height: u16,
+        transparent: bool,
+        use_depth_buffer: bool,
+        f: impl FnOnce(&mut HybridRenderer) -> R,
+    ) -> R {
+        let mut slot = slot.borrow_mut();
+        let ctx = slot.get_or_insert_with(|| {
+            get_ctx_with_depth_buffer::<HybridRenderer>(
+                width,
+                height,
+                true,
+                0,
+                "fallback",
+                RenderMode::OptimizeSpeed,
+                use_depth_buffer,
+            )
+        });
+        ctx.reset_for_test(width, height);
+
+        if !transparent {
+            let path = Rect::new(0.0, 0.0, width.into(), height.into()).to_path(0.1);
+            ctx.set_paint(WHITE);
+            ctx.fill_path(&path);
+        }
+
+        f(ctx)
+    }
+
+    if use_depth_buffer {
+        WEBGL_RENDERER.with(|slot| run(slot, width, height, transparent, true, f))
+    } else {
+        WEBGL_RENDERER_NO_DEPTH.with(|slot| run(slot, width, height, transparent, false, f))
+    }
 }
 
 pub(crate) fn miter_stroke_2() -> Stroke {

@@ -22,7 +22,7 @@ use vello_gpu::{
     Scene, TargetInit as HybridTargetInit, TextureId,
 };
 #[cfg(all(target_arch = "wasm32", feature = "webgl"))]
-use web_sys::WebGl2RenderingContext;
+use web_sys::{HtmlCanvasElement, WebGl2RenderingContext};
 
 pub(crate) trait Renderer: Sized {
     type GlyphRunBackend<'a>: GlyphRunBackend<'a>
@@ -766,6 +766,7 @@ pub(crate) struct HybridRenderer {
     scene: Scene,
     resources: HybridResources,
     renderer: vello_gpu::WebGlRenderer,
+    canvas: HtmlCanvasElement,
     gl: WebGl2RenderingContext,
     external_textures: vello_gpu::WebGlTextureBindings,
     next_external_texture_id: u64,
@@ -780,41 +781,17 @@ impl HybridRenderer {
             .unwrap()
     }
 
-    pub(crate) fn renderer_info(&self) -> String {
-        const UNMASKED_VENDOR_WEBGL: u32 = 0x9245;
-        const UNMASKED_RENDERER_WEBGL: u32 = 0x9246;
-
-        let has_debug_info = self
-            .gl
-            .get_extension("WEBGL_debug_renderer_info")
-            .ok()
-            .flatten()
-            .is_some();
-        let (vendor_parameter, renderer_parameter) = if has_debug_info {
-            (UNMASKED_VENDOR_WEBGL, UNMASKED_RENDERER_WEBGL)
-        } else {
-            (
-                WebGl2RenderingContext::VENDOR,
-                WebGl2RenderingContext::RENDERER,
-            )
-        };
-        let parameter = |name| {
-            self.gl
-                .get_parameter(name)
-                .ok()
-                .and_then(|value| value.as_string())
-                .unwrap_or_else(|| "unknown".to_owned())
-        };
-
-        format!(
-            "vendor={}, renderer={}",
-            parameter(vendor_parameter),
-            parameter(renderer_parameter)
-        )
-    }
-
-    pub(crate) fn finish(&self) {
-        self.gl.finish();
+    pub(crate) fn reset_for_test(&mut self, width: u16, height: u16) {
+        if self.canvas.width() != u32::from(width) {
+            self.canvas.set_width(width.into());
+        }
+        if self.canvas.height() != u32::from(height) {
+            self.canvas.set_height(height.into());
+        }
+        self.scene.reset_and_resize(width, height);
+        self.external_textures = vello_gpu::WebGlTextureBindings::new();
+        self.next_external_texture_id = 1;
+        self.clear_color = AlphaColor::TRANSPARENT;
     }
 }
 
@@ -842,7 +819,6 @@ impl Renderer for HybridRenderer {
         use_depth_buffer: bool,
     ) -> Self {
         use wasm_bindgen::JsCast;
-        use web_sys::HtmlCanvasElement;
 
         if num_threads != 0 {
             panic!("hybrid renderer doesn't support multi-threading");
@@ -874,6 +850,7 @@ impl Renderer for HybridRenderer {
             scene,
             resources,
             renderer,
+            canvas,
             gl,
             external_textures: vello_gpu::WebGlTextureBindings::new(),
             next_external_texture_id: 1,

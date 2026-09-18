@@ -401,12 +401,12 @@ impl TestContext<'_> {
         }
     }
 
-    fn invocation(&self, cached: bool) -> TokenStream2 {
+    fn invocation(&self, cached: bool, ctx: TokenStream2) -> TokenStream2 {
         let input_fn_name = self.input_fn_name;
         match (self.args.glyph, cached) {
-            (false, false) => quote! { #input_fn_name(&mut ctx); },
-            (true, false) => quote! { #input_fn_name(&mut ctx, false); },
-            (true, true) => quote! { #input_fn_name(&mut ctx, true); },
+            (false, false) => quote! { #input_fn_name(#ctx); },
+            (true, false) => quote! { #input_fn_name(#ctx, false); },
+            (true, true) => quote! { #input_fn_name(#ctx, true); },
             (false, true) => unreachable!("only glyph tests have cached variants"),
         }
     }
@@ -446,9 +446,8 @@ impl TestContext<'_> {
         } else {
             self.reference_image_name
         };
-        let invoke_input = self.invocation(cached);
         let ignore_attribute = self.ignore_attribute(ignore);
-        let (cfg_attribute, test_attribute, asyncness, create_ctx) = match renderer {
+        let (cfg_attribute, test_attribute, asyncness, create_ctx, shared_webgl) = match renderer {
             Renderer::Cpu(variant) => {
                 let (pipeline, level, num_threads) = variant.config();
                 let render_mode = pipeline.render_mode();
@@ -494,6 +493,7 @@ impl TestContext<'_> {
                             #render_mode,
                         )
                     },
+                    None,
                 )
             }
             Renderer::Hybrid(variant) => {
@@ -531,17 +531,44 @@ impl TestContext<'_> {
                         )
                     }
                 };
-                (cfg_attribute, test_attribute, asyncness, create_ctx)
+                (
+                    cfg_attribute,
+                    test_attribute,
+                    asyncness,
+                    create_ctx,
+                    webgl.then_some(!variant.no_depth),
+                )
             }
         };
 
-        quote! {
-            #cfg_attribute
-            #ignore_attribute
-            #test_attribute
-            #asyncness fn #fn_name() {
-                use crate::util::check_ref;
-
+        let test_body = if let Some(use_depth_buffer) = shared_webgl {
+            let invoke_input = self.invocation(cached, quote! { ctx });
+            quote! {
+                crate::util::with_webgl_ctx(
+                    #width,
+                    #height,
+                    #transparent,
+                    #use_depth_buffer,
+                    |ctx| {
+                        #invoke_input
+                        ctx.flush();
+                        if !#no_ref {
+                            check_ref(
+                                ctx,
+                                #test_name,
+                                #fn_name_str,
+                                #tolerance,
+                                #diff_pixels,
+                                #is_reference,
+                                #reference_image_name,
+                            );
+                        }
+                    },
+                );
+            }
+        } else {
+            let invoke_input = self.invocation(cached, quote! { &mut ctx });
+            quote! {
                 let mut ctx = #create_ctx;
                 #invoke_input
                 ctx.flush();
@@ -556,6 +583,17 @@ impl TestContext<'_> {
                         #reference_image_name,
                     );
                 }
+            }
+        };
+
+        quote! {
+            #cfg_attribute
+            #ignore_attribute
+            #test_attribute
+            #asyncness fn #fn_name() {
+                use crate::util::check_ref;
+
+                #test_body
             }
         }
     }

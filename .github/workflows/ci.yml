@@ -527,16 +527,10 @@ jobs:
       - name: Run vello_tests on Chrome
         # We need to run in release mode, because otherwise wasm_parser can't read the
         # blob, see <https://github.com/linebender/vello/pull/1078#issuecomment-3029336905>
-        # Temporarily omit the WebGL tests to measure their impact on the job runtime.
-        run: wasm-pack test --mode no-install --headless --chrome --release
+        run: wasm-pack test --mode no-install --headless --chrome --features webgl --release
         working-directory: vello_tests
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-
-      - name: Profile WebGL test phases
-        if: matrix.name == 'default'
-        run: wasm-pack test --mode no-install --headless --chrome --features webgl_profile --test webgl_profile --release -- --nocapture
-        working-directory: vello_tests
 
   test-wgpu-webgl:
     name: cargo test (wgpu WebGL)
