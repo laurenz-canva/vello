@@ -303,6 +303,25 @@ impl Renderer for CpuRenderer {
 static WGPU_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
+static WGPU_DEVICE_QUEUE: std::sync::LazyLock<(wgpu::Device, wgpu::Queue)> =
+    std::sync::LazyLock::new(|| {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            force_fallback_adapter: false,
+            compatible_surface: None,
+            ..Default::default()
+        }))
+        .expect("Failed to find an appropriate adapter");
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Device"),
+            required_features: wgpu::Features::empty(),
+            ..Default::default()
+        }))
+        .expect("Failed to create device")
+    });
+
+#[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
 pub(crate) struct HybridRenderer {
     scene: Scene,
     resources: HybridResources,
@@ -327,21 +346,9 @@ impl HybridRenderer {
         use_depth_buffer: bool,
     ) -> Self {
         let scene = Scene::new_with(width, height, settings.level);
-        // Initialize wgpu device and queue for GPU rendering
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-            ..Default::default()
-        }))
-        .expect("Failed to find an appropriate adapter");
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("Device"),
-            required_features: wgpu::Features::empty(),
-            ..Default::default()
-        }))
-        .expect("Failed to create device");
+        let (device, queue) = &*WGPU_DEVICE_QUEUE;
+        let device = device.clone();
+        let queue = queue.clone();
 
         // Create a render target texture
         let texture = device.create_texture(&wgpu::TextureDescriptor {
