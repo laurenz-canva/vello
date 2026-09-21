@@ -17,9 +17,10 @@ fn external_bilinear_sample(
     image_offset: vec2<f32>,
     image_size: vec2<f32>,
 ) -> vec4<f32> {
-    let image_max = image_offset + image_size - vec2(1.0);
-    let clamped_coords = clamp(coords, image_offset, image_max);
-    let coord_quad = vec4(floor(clamped_coords), ceil(clamped_coords));
+    let image_max = image_size - vec2(1.0);
+    let clamped_coords = clamp(coords, vec2(0.0), image_max);
+    let coord_quad = vec4(floor(clamped_coords), ceil(clamped_coords))
+        + vec4(image_offset, image_offset);
     let coord_frac = fract(coords);
     let a = textureLoad(external_texture, vec2<i32>(coord_quad.xy), 0);
     let b = textureLoad(external_texture, vec2<i32>(coord_quad.xw), 0);
@@ -36,30 +37,31 @@ fn external_bicubic_sample(
     image_offset: vec2<f32>,
     image_size: vec2<f32>,
 ) -> vec4<f32> {
-    let image_max = image_offset + image_size - vec2(1.0);
+    let image_max = image_size - vec2(1.0);
+    let offset = vec2<i32>(image_offset);
     let frac_coords = fract(coords + 0.5);
     let cx = cubic_weights(frac_coords.x);
     let cy = cubic_weights(frac_coords.y);
 
-    let s00 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(-1.5, -1.5), image_offset, image_max)), 0);
-    let s10 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(-0.5, -1.5), image_offset, image_max)), 0);
-    let s20 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(0.5, -1.5), image_offset, image_max)), 0);
-    let s30 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(1.5, -1.5), image_offset, image_max)), 0);
+    let s00 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(-1.5, -1.5), vec2(0.0), image_max)), 0);
+    let s10 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(-0.5, -1.5), vec2(0.0), image_max)), 0);
+    let s20 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(0.5, -1.5), vec2(0.0), image_max)), 0);
+    let s30 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(1.5, -1.5), vec2(0.0), image_max)), 0);
 
-    let s01 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(-1.5, -0.5), image_offset, image_max)), 0);
-    let s11 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(-0.5, -0.5), image_offset, image_max)), 0);
-    let s21 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(0.5, -0.5), image_offset, image_max)), 0);
-    let s31 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(1.5, -0.5), image_offset, image_max)), 0);
+    let s01 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(-1.5, -0.5), vec2(0.0), image_max)), 0);
+    let s11 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(-0.5, -0.5), vec2(0.0), image_max)), 0);
+    let s21 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(0.5, -0.5), vec2(0.0), image_max)), 0);
+    let s31 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(1.5, -0.5), vec2(0.0), image_max)), 0);
 
-    let s02 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(-1.5, 0.5), image_offset, image_max)), 0);
-    let s12 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(-0.5, 0.5), image_offset, image_max)), 0);
-    let s22 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(0.5, 0.5), image_offset, image_max)), 0);
-    let s32 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(1.5, 0.5), image_offset, image_max)), 0);
+    let s02 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(-1.5, 0.5), vec2(0.0), image_max)), 0);
+    let s12 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(-0.5, 0.5), vec2(0.0), image_max)), 0);
+    let s22 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(0.5, 0.5), vec2(0.0), image_max)), 0);
+    let s32 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(1.5, 0.5), vec2(0.0), image_max)), 0);
 
-    let s03 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(-1.5, 1.5), image_offset, image_max)), 0);
-    let s13 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(-0.5, 1.5), image_offset, image_max)), 0);
-    let s23 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(0.5, 1.5), image_offset, image_max)), 0);
-    let s33 = textureLoad(external_texture, vec2<i32>(clamp(coords + vec2(1.5, 1.5), image_offset, image_max)), 0);
+    let s03 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(-1.5, 1.5), vec2(0.0), image_max)), 0);
+    let s13 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(-0.5, 1.5), vec2(0.0), image_max)), 0);
+    let s23 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(0.5, 1.5), vec2(0.0), image_max)), 0);
+    let s33 = textureLoad(external_texture, offset + vec2<i32>(clamp(coords + vec2(1.5, 1.5), vec2(0.0), image_max)), 0);
 
     let row0 = cx.x * s00 + cx.y * s10 + cx.z * s20 + cx.w * s30;
     let row1 = cx.x * s01 + cx.y * s11 + cx.z * s21 + cx.w * s31;
@@ -90,5 +92,9 @@ fn sample_external_image(
             image_size,
         );
     }
-    return textureLoad(external_texture, vec2<u32>(coords), 0);
+    return textureLoad(
+        external_texture,
+        vec2<u32>(image_offset) + vec2<u32>(coords),
+        0,
+    );
 }

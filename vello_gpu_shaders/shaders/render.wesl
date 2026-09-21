@@ -288,7 +288,6 @@ fn vs_main(
                 f32(scene_strip.y) + y * f32(height),
             );
             out.sample_xy = get_image_translate(image_texel1, image_texel2)
-                + get_image_offset(image_texel0)
                 + get_image_transform(image_texel0, image_texel1) * pos;
         } else if paint_type == PAINT_TYPE_LINEAR_GRADIENT || paint_type == PAINT_TYPE_RADIAL_GRADIENT || paint_type == PAINT_TYPE_SWEEP_GRADIENT || paint_type == PAINT_TYPE_BLURRED_ROUNDED_RECT {
             // Use view coordinates for gradient transform (always in global view space)
@@ -403,7 +402,7 @@ fn fs_main(
             let packed_tint = image_texel2.y;
             let image_tint = unpack4x8unorm(packed_tint);
             let is_multiply = image_texel2.z == TINT_MODE_MULTIPLY;
-            let local_xy = sample_xy - image_offset;
+            let local_xy = sample_xy;
             let extended_xy = vec2<f32>(
                 extend_mode(local_xy.x, image_extend_modes.x, image_size.x),
                 extend_mode(local_xy.y, image_extend_modes.y, image_size.y)
@@ -415,12 +414,11 @@ fn fs_main(
             var sample_color: vec4<f32>;
             let external_texture_slot =
                 (paint_and_rect_flag >> EXTERNAL_TEXTURE_SLOT_SHIFT) & 0x3u;
-            let final_xy = image_offset + extended_xy;
             if external_texture_slot == 0u {
                 sample_color = sample_external_image(
                     external_texture_0,
                     image_quality,
-                    final_xy,
+                    extended_xy,
                     image_offset,
                     image_size,
                 );
@@ -428,7 +426,7 @@ fn fs_main(
                 sample_color = sample_external_image(
                     external_texture_1,
                     image_quality,
-                    final_xy,
+                    extended_xy,
                     image_offset,
                     image_size,
                 );
@@ -436,7 +434,7 @@ fn fs_main(
                 sample_color = sample_external_image(
                     external_texture_2,
                     image_quality,
-                    final_xy,
+                    extended_xy,
                     image_offset,
                     image_size,
                 );
@@ -444,7 +442,7 @@ fn fs_main(
                 sample_color = sample_external_image(
                     external_texture_3,
                     image_quality,
-                    final_xy,
+                    extended_xy,
                     image_offset,
                     image_size,
                 );
