@@ -226,6 +226,64 @@ fn image_with_transform_skew_x_2(ctx: &mut impl Renderer) {
     );
 }
 
+#[vello_test(gpu_only)]
+fn image_sampling_coordinates_remain_atlas_local(ctx: &mut impl Renderer) {
+    const ATLAS_WIDTH: u16 = 4096;
+    const IMAGE_WIDTH: u16 = 10;
+    const IMAGE_HEIGHT: u16 = 10;
+    const ATLAS_OFFSET_Y: u16 = 1281;
+    const EPSILON: f64 = 0.000_02;
+
+    // Fill the full atlas width so that the next image starts at y = 1281.
+    let _filler = ctx.get_image_source(Arc::new(vello_common::pixmap::Pixmap::new(
+        ATLAS_WIDTH,
+        ATLAS_OFFSET_Y,
+    )));
+
+    let mut image = vello_common::pixmap::Pixmap::new(IMAGE_WIDTH, IMAGE_HEIGHT);
+    for (y, row) in image
+        .data_as_u8_slice_mut()
+        .chunks_exact_mut(usize::from(IMAGE_WIDTH) * 4)
+        .enumerate()
+    {
+        let color = if y == 0 {
+            [255, 0, 0, 255]
+        } else if y == usize::from(IMAGE_HEIGHT - 1) {
+            [0, 0, 255, 255]
+        } else {
+            [0, 255, 0, 255]
+        };
+        for pixel in row.chunks_exact_mut(4) {
+            pixel.copy_from_slice(&color);
+        }
+    }
+    image.recompute_may_have_transparency();
+    let image = ctx.get_image_source(Arc::new(image));
+
+    // At the center of the bottom pixel row, the local y-coordinate is 9.99998. Keeping this
+    // coordinate local samples the final (blue) image row. Adding the atlas offset before
+    // interpolation rounds it to exactly 1291.0; subtracting 1281 then produces 10.0, which
+    // Repeat wraps to the red row 0.
+    ctx.set_paint_transform(Affine::new([
+        8.0,
+        0.0,
+        0.0,
+        8.0,
+        10.0,
+        9.5 + 8.0 * EPSILON,
+    ]));
+    ctx.set_paint(Image {
+        image,
+        sampler: ImageSampler {
+            x_extend: Extend::Repeat,
+            y_extend: Extend::Repeat,
+            quality: ImageQuality::Low,
+            alpha: 1.0,
+        },
+    });
+    ctx.fill_rect(&Rect::new(10.0, 10.0, 90.0, 90.0));
+}
+
 #[vello_test(gpu_diff_pixels = 64)]
 fn image_with_transform_skew_y_1(ctx: &mut impl Renderer) {
     transform(
