@@ -22,7 +22,7 @@ use vello_gpu::{
     TargetInit as GpuTargetInit, TextureId,
 };
 #[cfg(all(target_arch = "wasm32", feature = "webgl"))]
-use web_sys::WebGl2RenderingContext;
+use web_sys::{HtmlCanvasElement, WebGl2RenderingContext};
 
 pub(crate) trait Renderer: Sized {
     type GlyphRunBackend<'a>: GlyphRunBackend<'a>
@@ -784,6 +784,48 @@ impl GpuRenderer {
             .upload_image(&mut self.resources, pixmap)
             .unwrap()
     }
+
+    pub(crate) fn create_canvas() -> HtmlCanvasElement {
+        use wasm_bindgen::JsCast;
+
+        web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .create_element("canvas")
+            .unwrap()
+            .dyn_into::<HtmlCanvasElement>()
+            .unwrap()
+    }
+
+    pub(crate) fn new_with_canvas(
+        width: u16,
+        height: u16,
+        use_depth_buffer: bool,
+        canvas: &HtmlCanvasElement,
+    ) -> Self {
+        canvas.set_width(width.into());
+        canvas.set_height(height.into());
+
+        let mut settings = GpuRenderSettings::default();
+        // See the comment in `Renderer::new_with_depth_buffer` for why we change the
+        // `min_texture_size`.
+        settings.memory_settings.layers_config.min_texture_size = vello_gpu::SizeU16::new(100);
+        let scene = Scene::new_with(width, height, settings.level);
+        let (renderer, resources) =
+            vello_gpu::WebGlRenderer::new_with(canvas, settings, use_depth_buffer).unwrap();
+        let gl = renderer.gl_context().clone();
+
+        Self {
+            scene,
+            resources,
+            renderer,
+            gl,
+            external_textures: vello_gpu::WebGlTextureBindings::new(),
+            next_external_texture_id: 1,
+            clear_color: AlphaColor::TRANSPARENT,
+        }
+    }
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "webgl"))]
@@ -805,52 +847,18 @@ impl Renderer for GpuRenderer {
         width: u16,
         height: u16,
         num_threads: u16,
-        level: Level,
+        _level: Level,
         _: RenderMode,
         use_depth_buffer: bool,
     ) -> Self {
-        use wasm_bindgen::JsCast;
-        use web_sys::HtmlCanvasElement;
-
         if num_threads != 0 {
             panic!("GPU renderer doesn't support multi-threading");
         }
 
-        if !level.is_fallback() {
-            panic!("GPU renderer doesn't support SIMD");
-        }
-
-        let mut settings = GpuRenderSettings::default();
-        // See the comment above for why we change the `min_texture_size`.
-        settings.memory_settings.layers_config.min_texture_size = vello_gpu::SizeU16::new(100);
-        let scene = Scene::new_with(width, height, settings.level);
         // Create an offscreen HTMLCanvasElement, render the test image to it, and finally read off
         // the pixmap for diff checking.
-        let document = web_sys::window().unwrap().document().unwrap();
-        let canvas = document
-            .create_element("canvas")
-            .unwrap()
-            .dyn_into::<HtmlCanvasElement>()
-            .unwrap();
-        canvas.set_width(width.into());
-        canvas.set_height(height.into());
-        let (renderer, resources) =
-            vello_gpu::WebGlRenderer::new_with(&canvas, settings, use_depth_buffer).unwrap();
-        let gl = canvas
-            .get_context("webgl2")
-            .unwrap()
-            .unwrap()
-            .dyn_into::<WebGl2RenderingContext>()
-            .unwrap();
-        Self {
-            scene,
-            resources,
-            renderer,
-            gl,
-            external_textures: vello_gpu::WebGlTextureBindings::new(),
-            next_external_texture_id: 1,
-            clear_color: AlphaColor::TRANSPARENT,
-        }
+        let canvas = Self::create_canvas();
+        Self::new_with_canvas(width, height, use_depth_buffer, &canvas)
     }
 
     fn fill_path(&mut self, path: &BezPath) {
@@ -1012,6 +1020,10 @@ impl Renderer for GpuRenderer {
         let width = self.scene.width();
         let height = self.scene.height();
         let mut pixels = vec![0_u8; (width as usize) * (height as usize) * 4];
+        self.gl
+            .bind_framebuffer(WebGl2RenderingContext::READ_FRAMEBUFFER, None);
+        self.gl
+            .bind_buffer(WebGl2RenderingContext::PIXEL_PACK_BUFFER, None);
         self.gl
             .read_pixels_with_opt_u8_array(
                 0,

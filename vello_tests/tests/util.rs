@@ -3,6 +3,8 @@
 
 //! Utility functions shared across different tests.
 
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+use crate::renderer::GpuRenderer;
 use crate::renderer::Renderer;
 use glifo::Glyph;
 use image::{Rgba, RgbaImage, load_from_memory};
@@ -10,6 +12,8 @@ use serde::Serializer;
 use skrifa::MetadataProvider;
 use skrifa::raw::FileRef;
 use smallvec::smallvec;
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+use std::cell::RefCell;
 use std::cmp::max;
 use std::sync::Arc;
 use vello_common::color::DynamicColor;
@@ -200,6 +204,50 @@ pub(crate) fn get_ctx_with_depth_buffer<T: Renderer>(
     }
 
     ctx
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+thread_local! {
+    static WEBGL_CANVAS: RefCell<Option<web_sys::HtmlCanvasElement>> = const { RefCell::new(None) };
+    static WEBGL_CANVAS_NO_DEPTH: RefCell<Option<web_sys::HtmlCanvasElement>> = const { RefCell::new(None) };
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+pub(crate) fn with_webgl_ctx<R>(
+    width: u16,
+    height: u16,
+    transparent: bool,
+    use_depth_buffer: bool,
+    f: impl FnOnce(&mut GpuRenderer) -> R,
+) -> R {
+    fn run<R>(
+        slot: &RefCell<Option<web_sys::HtmlCanvasElement>>,
+        width: u16,
+        height: u16,
+        transparent: bool,
+        use_depth_buffer: bool,
+        f: impl FnOnce(&mut GpuRenderer) -> R,
+    ) -> R {
+        let canvas = {
+            let mut slot = slot.borrow_mut();
+            slot.get_or_insert_with(GpuRenderer::create_canvas).clone()
+        };
+        let mut ctx = GpuRenderer::new_with_canvas(width, height, use_depth_buffer, &canvas);
+
+        if !transparent {
+            let path = Rect::new(0.0, 0.0, width.into(), height.into()).to_path(0.1);
+            ctx.set_paint(WHITE);
+            ctx.fill_path(&path);
+        }
+
+        f(&mut ctx)
+    }
+
+    if use_depth_buffer {
+        WEBGL_CANVAS.with(|slot| run(slot, width, height, transparent, true, f))
+    } else {
+        WEBGL_CANVAS_NO_DEPTH.with(|slot| run(slot, width, height, transparent, false, f))
+    }
 }
 
 pub(crate) fn miter_stroke_2() -> Stroke {
