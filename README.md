@@ -162,3 +162,5 @@ their directories.
 [shader-unlicense]: https://github.com/linebender/vello/blob/main/research/vello_shaders/shader/UNLICENSE
 [vello-shaders-cpu-dir]: https://github.com/linebender/vello/tree/main/research/vello_shaders/src/cpu
 [vello-shaders-dir]: https://github.com/linebender/vello/tree/main/research/vello_shaders/shader
+
+<!-- CI warm-cache verification. -->
