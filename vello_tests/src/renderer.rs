@@ -301,6 +301,25 @@ impl Renderer for CpuRenderer {
 static WGPU_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
+static WGPU_DEVICE_QUEUE: std::sync::LazyLock<(wgpu::Device, wgpu::Queue)> =
+    std::sync::LazyLock::new(|| {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            force_fallback_adapter: false,
+            compatible_surface: None,
+            ..Default::default()
+        }))
+        .expect("Failed to find an appropriate adapter");
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Device"),
+            required_features: wgpu::Features::empty(),
+            ..Default::default()
+        }))
+        .expect("Failed to create device")
+    });
+
+#[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
 pub struct GpuRenderer {
     scene: Scene,
     resources: GpuResources,
@@ -325,21 +344,9 @@ impl GpuRenderer {
         use_depth_buffer: bool,
     ) -> Self {
         let scene = Scene::new_with(width, height, settings.level);
-        // Initialize wgpu device and queue for GPU rendering
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-            ..Default::default()
-        }))
-        .expect("Failed to find an appropriate adapter");
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("Device"),
-            required_features: wgpu::Features::empty(),
-            ..Default::default()
-        }))
-        .expect("Failed to create device");
+        let (device, queue) = &*WGPU_DEVICE_QUEUE;
+        let device = device.clone();
+        let queue = queue.clone();
 
         // Create a render target texture
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -434,15 +441,12 @@ impl Renderer for GpuRenderer {
         width: u16,
         height: u16,
         num_threads: u16,
-        level: Level,
+        _level: Level,
         _: RenderMode,
         use_depth_buffer: bool,
     ) -> Self {
         if num_threads != 0 {
             panic!("GPU renderer doesn't support multi-threading");
-        }
-        if !level.is_fallback() {
-            panic!("GPU renderer doesn't support SIMD");
         }
         let mut settings = GpuRenderSettings::default();
         // Most of the tests are 100x100 by default, and we want to make sure that some visual
@@ -588,11 +592,8 @@ impl Renderer for GpuRenderer {
         // On some platforms using `cargo test` triggers segmentation faults in wgpu when the GPU
         // tests are run in parallel (likely related to the number of device resources being
         // requested simultaneously). This is "fixed" by putting a mutex around GPU rendering and
-        // readback. This slows down testing when `cargo test` is used.
-        //
-        // Testing with `cargo nextest` (as on CI) is not meaningfully slowed down. `nextest` runs
-        // each test in its own process (<https://nexte.st/docs/design/why-process-per-test/>),
-        // meaning there is no contention on this mutex.
+        // readback. CI uses `cargo test`, so this intentionally trades some throughput for
+        // stability by serializing the GPU portion of otherwise parallel tests.
         self.lock_gpu_test();
 
         let width = self.scene.width();
@@ -801,7 +802,7 @@ impl Renderer for GpuRenderer {
         width: u16,
         height: u16,
         num_threads: u16,
-        level: Level,
+        _level: Level,
         _: RenderMode,
         use_depth_buffer: bool,
     ) -> Self {
@@ -810,10 +811,6 @@ impl Renderer for GpuRenderer {
 
         if num_threads != 0 {
             panic!("GPU renderer doesn't support multi-threading");
-        }
-
-        if !level.is_fallback() {
-            panic!("GPU renderer doesn't support SIMD");
         }
 
         let mut settings = GpuRenderSettings::default();
