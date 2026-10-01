@@ -49,6 +49,7 @@ import package::helpers::image::{
     get_image_translate
 };
 import package::helpers::math::{NEARLY_ZERO_TOLERANCE, TWO_PI};
+import package::helpers::paint::{PAINT_TEXTURE_INDEX_MASK, load_encoded_paint_texel};
 import package::helpers::util::unpack_u16_pair;
 
 // Color source modes - where the fragment shader gets color data from.
@@ -65,8 +66,6 @@ const PAINT_TYPE_RADIAL_GRADIENT: u32 = 3u;
 const PAINT_TYPE_SWEEP_GRADIENT: u32 = 4u;
 const PAINT_TYPE_BLURRED_ROUNDED_RECT: u32 = 5u;
 
-// 24 bits for paint indices.
-const PAINT_TEXTURE_INDEX_MASK: u32 = 0x00FFFFFFu;
 const EXTERNAL_TEXTURE_SLOT_SHIFT: u32 = 24u;
 
 const RECT_STRIP_FLAG: u32 = 0x80000000u;
@@ -270,9 +269,15 @@ fn vs_main(
 
         if paint_type == PAINT_TYPE_IMAGE {
             let paint_tex_idx = instance.paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let image_texel0 = load_encoded_paint_texel(paint_tex_idx, 0u);
-            let image_texel1 = load_encoded_paint_texel(paint_tex_idx, 1u);
-            let image_texel2 = load_encoded_paint_texel(paint_tex_idx, 2u);
+            let image_texel0 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
+            );
+            let image_texel1 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 1u,
+            );
+            let image_texel2 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 2u,
+            );
             // Use view coordinates for image sampling (always in global view space)
             let pos = vec2<f32>(
                 f32(scene_strip.x) + x * f32(width),
@@ -383,8 +388,12 @@ fn fs_main(
             final_color = alpha * unpack4x8unorm(payload);
         } else if paint_type == PAINT_TYPE_IMAGE {
             let paint_tex_idx = paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let image_texel0 = load_encoded_paint_texel(paint_tex_idx, 0u);
-            let image_texel2 = load_encoded_paint_texel(paint_tex_idx, 2u);
+            let image_texel0 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
+            );
+            let image_texel2 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 2u,
+            );
             let image_offset = get_image_offset(image_texel0);
             let image_size = get_image_size(image_texel0);
             let image_extend_modes = get_image_extend_modes(image_texel0);
@@ -416,8 +425,12 @@ fn fs_main(
             );
         } else if paint_type == PAINT_TYPE_LINEAR_GRADIENT {
             let paint_tex_idx = paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let gradient_texel0 = load_encoded_paint_texel(paint_tex_idx, 0u);
-            let gradient_texel1 = load_encoded_paint_texel(paint_tex_idx, 1u);
+            let gradient_texel0 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
+            );
+            let gradient_texel1 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 1u,
+            );
 
             // Calculate fragment position and apply affine transform
             let fragment_pos = sample_xy;
@@ -435,10 +448,18 @@ fn fs_main(
             final_color = alpha * gradient_color;
         } else if paint_type == PAINT_TYPE_RADIAL_GRADIENT {
             let paint_tex_idx = paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let gradient_texel0 = load_encoded_paint_texel(paint_tex_idx, 0u);
-            let gradient_texel1 = load_encoded_paint_texel(paint_tex_idx, 1u);
-            let gradient_texel2 = load_encoded_paint_texel(paint_tex_idx, 2u);
-            let gradient_texel3 = load_encoded_paint_texel(paint_tex_idx, 3u);
+            let gradient_texel0 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
+            );
+            let gradient_texel1 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 1u,
+            );
+            let gradient_texel2 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 2u,
+            );
+            let gradient_texel3 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 3u,
+            );
 
             // Calculate fragment position and apply affine transform
             let fragment_pos = sample_xy;
@@ -460,9 +481,15 @@ fn fs_main(
             );
         } else if paint_type == PAINT_TYPE_SWEEP_GRADIENT {
             let paint_tex_idx = paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let gradient_texel0 = load_encoded_paint_texel(paint_tex_idx, 0u);
-            let gradient_texel1 = load_encoded_paint_texel(paint_tex_idx, 1u);
-            let gradient_texel2 = load_encoded_paint_texel(paint_tex_idx, 2u);
+            let gradient_texel0 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
+            );
+            let gradient_texel1 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 1u,
+            );
+            let gradient_texel2 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 2u,
+            );
 
             // Calculate fragment position and apply affine transform
             let fragment_pos = sample_xy;
@@ -494,11 +521,21 @@ fn fs_main(
             final_color = alpha * gradient_color;
         } else if paint_type == PAINT_TYPE_BLURRED_ROUNDED_RECT {
             let paint_tex_idx = paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let blurred_texel0 = load_encoded_paint_texel(paint_tex_idx, 0u);
-            let blurred_texel1 = load_encoded_paint_texel(paint_tex_idx, 1u);
-            let blurred_texel2 = load_encoded_paint_texel(paint_tex_idx, 2u);
-            let blurred_texel3 = load_encoded_paint_texel(paint_tex_idx, 3u);
-            let blurred_texel4 = load_encoded_paint_texel(paint_tex_idx, 4u);
+            let blurred_texel0 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
+            );
+            let blurred_texel1 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 1u,
+            );
+            let blurred_texel2 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 2u,
+            );
+            let blurred_texel3 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 3u,
+            );
+            let blurred_texel4 = load_encoded_paint_texel(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 4u,
+            );
             final_color = alpha * calculate_blurred_rounded_rect(
                 sample_xy,
                 blurred_texel0,
@@ -516,20 +553,4 @@ fn fs_main(
     }
 
     return final_color;
-}
-
-// Convert a flat texel index to 2D texture coordinates for the encoded paints texture.
-fn encoded_paint_coord(flat_idx: u32) -> vec2<u32> {
-    return vec2<u32>(
-        flat_idx & ((1u << config.encoded_paints_tex_width_bits) - 1u),
-        flat_idx >> config.encoded_paints_tex_width_bits
-    );
-}
-
-fn load_encoded_paint_texel(paint_tex_idx: u32, texel_offset: u32) -> vec4<u32> {
-    return textureLoad(
-        encoded_paints_texture,
-        encoded_paint_coord(paint_tex_idx + texel_offset),
-        0,
-    );
 }
