@@ -47,7 +47,8 @@ vello_common = { workspace = true, features = ["pico_svg"] }
 roxmltree = "0.20.0"
 
 [features]
-default = ["wgpu", "wgpu_default", "text"]
+default = ["wgpu", "wgpu_default", "text", "blurred_rounded_rect"]
+blurred_rounded_rect = ["vello_gpu_shaders?/blurred_rounded_rect"]
 std = ["vello_common/std", "glifo?/std"]
 libm = ["vello_common/libm", "glifo?/libm"]
 wgpu = ["dep:wgpu", "dep:vello_gpu_shaders"]

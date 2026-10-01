@@ -34,6 +34,8 @@ naga = { workspace = true, features = ["wgsl-in", "wgsl-out", "glsl-out"] }
 wesl = "=0.4.0"
 
 [features]
+default = ["blurred_rounded_rect"]
+blurred_rounded_rect = []
 glsl = ["dep:naga"]
 unminified = []
 

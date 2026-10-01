@@ -18,6 +18,8 @@ generated GLSL shader programs, used by the Vello GPU renderer.
   [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) to minify the resulting
   WGSL.
 - Optional generation of minified GLSL and reflection metadata for WebGL.
+- The default `blurred_rounded_rect` feature includes the blurred rounded rect
+  shader path; disabling default features omits it from the linked shader.
 
 ## Usage
 

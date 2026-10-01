@@ -46,6 +46,9 @@ preprocessing and GPU rendering:
 - `wgpu_default` (enabled by default): Enables wgpu with its default hardware
   backends (such as Vulkan, Metal, and DX12).
 - `text` (enabled by default): Enables glyph rendering ([`Scene::glyph_run`]).
+- `blurred_rounded_rect` (enabled by default): Enables
+  `Scene::fill_blurred_rounded_rect` and its shader code. Disable it when
+  scenes do not use this operation.
 - `webgl`: Enables the WebGL rendering backend for browser support, using GLSL
   shaders for compatibility.
 

@@ -24,7 +24,11 @@
 // More details in the `StripInstance` documentation below.
 
 import package::helpers::alpha::unpack_alphas_from_channel;
-import package::helpers::blurred_rounded_rect::calculate_blurred_rounded_rect;
+@if(blurred_rounded_rect)
+import package::helpers::blurred_rounded_rect::{
+    get_blurred_rounded_rect_sample_xy,
+    sample_blurred_rounded_rect,
+};
 import package::helpers::extend::extend_mode;
 import package::helpers::external_texture::sample_external_image;
 import package::helpers::gradient::{
@@ -285,12 +289,15 @@ fn vs_main(
             );
             out.sample_xy = get_image_translate(image_texel1, image_texel2)
                 + get_image_transform(image_texel0, image_texel1) * pos;
-        } else if paint_type == PAINT_TYPE_LINEAR_GRADIENT || paint_type == PAINT_TYPE_RADIAL_GRADIENT || paint_type == PAINT_TYPE_SWEEP_GRADIENT || paint_type == PAINT_TYPE_BLURRED_ROUNDED_RECT {
+        } else if paint_type == PAINT_TYPE_LINEAR_GRADIENT || paint_type == PAINT_TYPE_RADIAL_GRADIENT || paint_type == PAINT_TYPE_SWEEP_GRADIENT {
             // Use view coordinates for gradient transform (always in global view space)
             out.sample_xy = vec2<f32>(
                 f32(scene_strip.x) + x * f32(width),
                 f32(scene_strip.y) + y * f32(height)
             );
+        } else if paint_type == PAINT_TYPE_BLURRED_ROUNDED_RECT {
+            @if(blurred_rounded_rect)
+            out.sample_xy = get_blurred_rounded_rect_sample_xy(scene_strip, corner, width, height);
         }
     } else if color_source == COLOR_SOURCE_LAYER {
         let source = unpack_u16_pair(instance.payload);
@@ -520,29 +527,10 @@ fn fs_main(
             );
             final_color = alpha * gradient_color;
         } else if paint_type == PAINT_TYPE_BLURRED_ROUNDED_RECT {
-            let paint_tex_idx = paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let blurred_texel0 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
-            );
-            let blurred_texel1 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 1u,
-            );
-            let blurred_texel2 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 2u,
-            );
-            let blurred_texel3 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 3u,
-            );
-            let blurred_texel4 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 4u,
-            );
-            final_color = alpha * calculate_blurred_rounded_rect(
-                sample_xy,
-                blurred_texel0,
-                blurred_texel1,
-                blurred_texel2,
-                blurred_texel3,
-                blurred_texel4,
+            @if(blurred_rounded_rect)
+            final_color = alpha * sample_blurred_rounded_rect(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits,
+                paint_and_rect_flag, sample_xy,
             );
         }
     } else if color_source == COLOR_SOURCE_LAYER {
