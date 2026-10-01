@@ -49,6 +49,8 @@ preprocessing and GPU rendering:
 - `blurred_rounded_rect` (enabled by default): Enables
   `Scene::fill_blurred_rounded_rect` and its shader code. Disable it when
   scenes do not use this operation.
+- `image_bicubic` (enabled by default): Includes bicubic image sampling in the
+  shader. When disabled, `ImageQuality::High` uses bilinear sampling instead.
 - `webgl`: Enables the WebGL rendering backend for browser support, using GLSL
   shaders for compatibility.
 

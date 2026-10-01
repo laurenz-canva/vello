@@ -20,6 +20,8 @@ generated GLSL shader programs, used by the Vello GPU renderer.
 - Optional generation of minified GLSL and reflection metadata for WebGL.
 - The default `blurred_rounded_rect` feature includes the blurred rounded rect
   shader path; disabling default features omits it from the linked shader.
+- The default `image_bicubic` feature includes bicubic image sampling. When
+  disabled, high quality images use bilinear sampling instead.
 
 ## Usage
 

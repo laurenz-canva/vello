@@ -6,8 +6,9 @@
 import package::helpers::image::{
     IMAGE_QUALITY_HIGH,
     IMAGE_QUALITY_MEDIUM,
-    cubic_weights
 };
+@if(image_bicubic)
+import package::helpers::image::cubic_weights;
 
 // This is the same as `helpers::image::bilinear_sample`, but for a 2D texture
 // instead of an atlas texture array.
@@ -30,6 +31,7 @@ fn external_bilinear_sample(
 
 // This is the same as `helpers::image::bicubic_sample`, but for a 2D texture
 // instead of an atlas texture array.
+@if(image_bicubic)
 fn external_bicubic_sample(
     external_texture: texture_2d<f32>,
     coords: vec2<f32>,
@@ -79,10 +81,12 @@ fn sample_external_image(
     image_offset: vec2<f32>,
     image_size: vec2<f32>,
 ) -> vec4<f32> {
+    @if(image_bicubic)
     if quality == IMAGE_QUALITY_HIGH {
         return external_bicubic_sample(external_texture, coords, image_offset, image_size);
     }
-    if quality == IMAGE_QUALITY_MEDIUM {
+    // Fall back to bilinear for high quality when bicubic sampling is disabled.
+    if quality == IMAGE_QUALITY_MEDIUM || quality == IMAGE_QUALITY_HIGH {
         return external_bilinear_sample(
             external_texture,
             coords - vec2(0.5),
