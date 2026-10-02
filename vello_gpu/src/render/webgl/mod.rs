@@ -653,6 +653,11 @@ impl WebGlRenderer {
         // buffer fills.
         self.programs.prepare(
             &self.gl,
+            #[cfg(any(
+                feature = "gradient_linear",
+                feature = "gradient_radial",
+                feature = "gradient_sweep"
+            ))]
             &mut self.gradient_cache,
             &self.encoded_paints,
             &mut scene.strip_storage.borrow_mut().alphas,
@@ -1268,10 +1273,20 @@ pub(crate) struct WebGlResources {
     /// Height of encoded paints texture.
     encoded_paints_texture_height: u32,
     /// Gradient texture for gradient ramp data.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     gradient_texture: Texture,
     /// Placeholder texture bound to unoccupied external texture slots.
     placeholder_external_texture: Texture,
     /// Height of gradient texture.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     gradient_texture_height: u32,
 
     /// Config buffer for rendering strips into the root target.
@@ -1580,6 +1595,11 @@ impl WebGlPrograms {
     fn prepare(
         &mut self,
         gl: &WebGl2RenderingContext,
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         gradient_cache: &mut GradientRampCache,
         encoded_paints: &[GpuEncodedPaint],
         alphas: &mut Vec<u8>,
@@ -1600,6 +1620,11 @@ impl WebGlPrograms {
         self.upload_encoded_paints_texture(gl, encoded_paints, paint_idxs)?;
         self.upload_filter_data_texture(gl, filter_context)?;
 
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         if gradient_cache.has_changed() {
             self.maybe_resize_gradient_tex(gl, resource_texture_dimension_2d, gradient_cache)?;
             self.upload_gradient_texture(gl, gradient_cache)?;
@@ -1850,6 +1875,11 @@ impl WebGlPrograms {
     }
 
     /// Grow the gradient texture if needed.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     fn maybe_resize_gradient_tex(
         &mut self,
         gl: &WebGl2RenderingContext,
@@ -1985,6 +2015,11 @@ impl WebGlPrograms {
     }
 
     /// Upload gradient data to the texture.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     fn upload_gradient_texture(
         &mut self,
         gl: &WebGl2RenderingContext,
@@ -2498,6 +2533,11 @@ fn create_webgl_resources(
     let encoded_paints_texture = create_placeholder_rgba32ui_texture(gl)?;
 
     // Create and configure gradient texture.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     let gradient_texture = create_placeholder_rgba8_texture(gl)?;
     let placeholder_external_texture = create_placeholder_rgba8_texture(gl)?;
 
@@ -2515,8 +2555,18 @@ fn create_webgl_resources(
         atlas_size,
         encoded_paints_texture,
         encoded_paints_texture_height: 0,
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         gradient_texture,
         placeholder_external_texture,
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         gradient_texture_height: 0,
         view_config_buffer,
         view_framebuffer: ViewFramebuffer::default(use_depth_buffer),
