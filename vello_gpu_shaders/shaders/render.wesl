@@ -31,17 +31,14 @@ import package::helpers::blurred_rounded_rect::{
 };
 import package::helpers::extend::extend_mode;
 import package::helpers::external_texture::sample_external_image;
-import package::helpers::gradient::{
-    apply_gradient_transform,
-    calculate_radial_gradient,
-    get_gradient_extend_mode,
-    get_gradient_start,
-    get_gradient_texture_width,
-    get_sweep_inv_angle_delta,
-    get_sweep_start_angle,
-    sample_gradient_lut,
-    xy_to_unit_angle
-};
+@if(gradient_linear || gradient_radial || gradient_sweep)
+import package::helpers::gradient::get_gradient_sample_xy;
+@if(gradient_linear)
+import package::helpers::gradient::sample_linear_gradient;
+@if(gradient_radial)
+import package::helpers::gradient::sample_radial_gradient;
+@if(gradient_sweep)
+import package::helpers::gradient::sample_sweep_gradient;
 import package::helpers::geometry::{pixel_to_ndc, quad_corner};
 import package::helpers::image::{
     TINT_MODE_MULTIPLY,
@@ -52,7 +49,6 @@ import package::helpers::image::{
     get_image_transform,
     get_image_translate
 };
-import package::helpers::math::{NEARLY_ZERO_TOLERANCE, TWO_PI};
 import package::helpers::paint::{PAINT_TEXTURE_INDEX_MASK, load_encoded_paint_texel};
 import package::helpers::util::unpack_u16_pair;
 
@@ -291,10 +287,8 @@ fn vs_main(
                 + get_image_transform(image_texel0, image_texel1) * pos;
         } else if paint_type == PAINT_TYPE_LINEAR_GRADIENT || paint_type == PAINT_TYPE_RADIAL_GRADIENT || paint_type == PAINT_TYPE_SWEEP_GRADIENT {
             // Use view coordinates for gradient transform (always in global view space)
-            out.sample_xy = vec2<f32>(
-                f32(scene_strip.x) + x * f32(width),
-                f32(scene_strip.y) + y * f32(height)
-            );
+            @if(gradient_linear || gradient_radial || gradient_sweep)
+            out.sample_xy = get_gradient_sample_xy(scene_strip, corner, width, height);
         } else if paint_type == PAINT_TYPE_BLURRED_ROUNDED_RECT {
             @if(blurred_rounded_rect)
             out.sample_xy = get_blurred_rounded_rect_sample_xy(scene_strip, corner, width, height);
@@ -431,101 +425,23 @@ fn fs_main(
                 is_multiply
             );
         } else if paint_type == PAINT_TYPE_LINEAR_GRADIENT {
-            let paint_tex_idx = paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let gradient_texel0 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
+            @if(gradient_linear)
+            final_color = sample_linear_gradient(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits,
+                gradient_texture, paint_and_rect_flag, sample_xy, alpha,
             );
-            let gradient_texel1 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 1u,
-            );
-
-            // Calculate fragment position and apply affine transform
-            let fragment_pos = sample_xy;
-            let grad_pos = apply_gradient_transform(gradient_texel0, gradient_texel1, fragment_pos);
-
-            // For linear gradient, t-value is just the x coordinate in gradient space
-            let t_value = grad_pos.x + 0.00001;
-            let gradient_color = sample_gradient_lut(
-                gradient_texture,
-                t_value,
-                get_gradient_extend_mode(gradient_texel0),
-                get_gradient_start(gradient_texel0),
-                get_gradient_texture_width(gradient_texel0)
-            );
-            final_color = alpha * gradient_color;
         } else if paint_type == PAINT_TYPE_RADIAL_GRADIENT {
-            let paint_tex_idx = paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let gradient_texel0 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
-            );
-            let gradient_texel1 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 1u,
-            );
-            let gradient_texel2 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 2u,
-            );
-            let gradient_texel3 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 3u,
-            );
-
-            // Calculate fragment position and apply affine transform
-            let fragment_pos = sample_xy;
-            let grad_pos = apply_gradient_transform(gradient_texel0, gradient_texel1, fragment_pos);
-
-            // For radial gradient, calculate distance from center
-            let gradient_result = calculate_radial_gradient(grad_pos, gradient_texel2, gradient_texel3);
-            let gradient_color = sample_gradient_lut(
-                gradient_texture,
-                gradient_result.x,
-                get_gradient_extend_mode(gradient_texel0),
-                get_gradient_start(gradient_texel0),
-                get_gradient_texture_width(gradient_texel0)
-            );
-            final_color = select(
-                vec4<f32>(0.0, 0.0, 0.0, 0.0),
-                alpha * gradient_color,
-                gradient_result.y != 0.0
+            @if(gradient_radial)
+            final_color = sample_radial_gradient(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits,
+                gradient_texture, paint_and_rect_flag, sample_xy, alpha,
             );
         } else if paint_type == PAINT_TYPE_SWEEP_GRADIENT {
-            let paint_tex_idx = paint_and_rect_flag & PAINT_TEXTURE_INDEX_MASK;
-            let gradient_texel0 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 0u,
+            @if(gradient_sweep)
+            final_color = sample_sweep_gradient(
+                encoded_paints_texture, config.encoded_paints_tex_width_bits,
+                gradient_texture, paint_and_rect_flag, sample_xy, alpha,
             );
-            let gradient_texel1 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 1u,
-            );
-            let gradient_texel2 = load_encoded_paint_texel(
-                encoded_paints_texture, config.encoded_paints_tex_width_bits, paint_tex_idx, 2u,
-            );
-
-            // Calculate fragment position and apply affine transform
-            let fragment_pos = sample_xy;
-            var grad_pos = apply_gradient_transform(gradient_texel0, gradient_texel1, fragment_pos);
-
-            // Before passing the position to the angle calculation, we bias
-            // very small coordinates to 0. Otherwise the sweep gradient's seam
-            // may flicker, because the angle calculation uses the coordinates'
-            // signs to select a quadrant. For coordinates around 0, slight
-            // noise in the coordinate calculation can then land the
-            // calculation in different quadrants. That flickering is quite
-            // noticeable as the seam is not anti-aliased. The flickering may
-            // vary across machines. See
-            // <https://github.com/linebender/vello/pull/1352>.
-            grad_pos = select(grad_pos, vec2(0.0), abs(grad_pos) < vec2(NEARLY_ZERO_TOLERANCE));
-
-            // For sweep gradient, calculate angle from center using fast polynomial approximation
-            let unit_angle = xy_to_unit_angle(grad_pos.x, grad_pos.y);
-            // Convert unit angle [0, 1) to radians [0, 2π)
-            let angle = unit_angle * TWO_PI;
-            let t_value = (angle - get_sweep_start_angle(gradient_texel2)) * get_sweep_inv_angle_delta(gradient_texel2);
-            let gradient_color = sample_gradient_lut(
-                gradient_texture,
-                t_value,
-                get_gradient_extend_mode(gradient_texel0),
-                get_gradient_start(gradient_texel0),
-                get_gradient_texture_width(gradient_texel0)
-            );
-            final_color = alpha * gradient_color;
         } else if paint_type == PAINT_TYPE_BLURRED_ROUNDED_RECT {
             @if(blurred_rounded_rect)
             final_color = alpha * sample_blurred_rounded_rect(

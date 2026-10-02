@@ -30,6 +30,9 @@
 //! - `blurred_rounded_rect` (enabled by default): Enables
 //!   `Scene::fill_blurred_rounded_rect` and its shader code. Disable it when
 //!   scenes do not use this operation.
+//! - `gradient_linear`, `gradient_radial`, `gradient_sweep` (enabled by default):
+//!   Include the corresponding gradient shader paths independently. Disable a
+//!   feature when scenes do not use that kind of gradient.
 //! - `webgl`: Enables the WebGL rendering backend for browser support, using GLSL
 //!   shaders for compatibility.
 //!

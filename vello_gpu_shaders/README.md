@@ -22,6 +22,9 @@ generated GLSL shader programs, used by the Vello GPU renderer.
   shader path; disabling default features omits it from the linked shader.
 - The default `image_bicubic` feature includes bicubic image sampling. When
   disabled, high quality images use bilinear sampling instead.
+- The default `gradient_linear`, `gradient_radial`, and `gradient_sweep` features
+  include their shader paths independently. Shared gradient helpers and the
+  gradient texture are stripped when all three are disabled.
 
 ## Usage
 
