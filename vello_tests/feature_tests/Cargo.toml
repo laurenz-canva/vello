@@ -16,7 +16,7 @@ path = "tests/features.rs"
 
 [dependencies]
 vello_common = { workspace = true, features = ["std", "png", "probe"] }
-vello_gpu = { workspace = true, default-features = false, features = ["probe"] }
+vello_gpu = { workspace = true, default-features = false, features = ["probe", "text"] }
 vello_test_support = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

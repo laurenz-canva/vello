@@ -12,7 +12,8 @@ bash vello_tests/feature_tests/run.sh wgpu
 bash vello_tests/feature_tests/run.sh webgl
 ```
 
-Features are disabled by default. Select only this package when testing combinations; workspace
+Optional shader features are disabled by default. Text support is always enabled, matching the
+existing test suite. Select only this package when testing combinations; workspace
 builds can enable additional features through other packages.
 
 Each build filters the common probe elements to those supported by its flags. Solids, alpha
