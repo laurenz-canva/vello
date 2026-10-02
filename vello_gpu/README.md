@@ -46,6 +46,14 @@ preprocessing and GPU rendering:
 - `wgpu_default` (enabled by default): Enables wgpu with its default hardware
   backends (such as Vulkan, Metal, and DX12).
 - `text` (enabled by default): Enables glyph rendering ([`Scene::glyph_run`]).
+- `blurred_rounded_rect` (enabled by default): Enables
+  `Scene::fill_blurred_rounded_rect` and its shader code. Disable it when
+  scenes do not use this operation.
+- `image_bicubic` (enabled by default): Includes bicubic image sampling in the
+  shader. When disabled, `ImageQuality::High` uses bilinear sampling instead.
+- `gradient_linear`, `gradient_radial`, `gradient_sweep` (enabled by default):
+  Include the corresponding gradient shader paths independently. Disable a
+  feature when scenes do not use that kind of gradient.
 - `webgl`: Enables the WebGL rendering backend for browser support, using GLSL
   shaders for compatibility.
 

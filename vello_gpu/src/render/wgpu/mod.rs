@@ -458,6 +458,11 @@ impl Renderer {
         self.programs.prepare(
             device,
             queue,
+            #[cfg(any(
+                feature = "gradient_linear",
+                feature = "gradient_radial",
+                feature = "gradient_sweep"
+            ))]
             &mut self.gradient_cache,
             &self.encoded_paints,
             &mut scene.strip_storage.borrow_mut().alphas,
@@ -907,6 +912,11 @@ struct Programs {
     /// Bind group layout for encoded paints
     encoded_paints_bind_group_layout: BindGroupLayout,
     /// Bind group layout for gradient texture
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     gradient_bind_group_layout: BindGroupLayout,
     /// Bind group layout for external textures.
     external_texture_bind_group_layout: BindGroupLayout,
@@ -1015,8 +1025,18 @@ struct GpuResources {
     /// Bind group for encoded paints
     encoded_paints_bind_group: BindGroup,
     /// Texture for gradient lookup table
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     gradient_texture: Texture,
     /// Bind group for gradient texture
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     gradient_bind_group: BindGroup,
     /// Texture holding serialized `GpuFilterData` for all filter layers.
     filter_data_texture: Texture,
@@ -1160,6 +1180,11 @@ impl Programs {
                 }],
             });
 
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         let gradient_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Gradient Bind Group Layout"),
@@ -1192,6 +1217,11 @@ impl Programs {
                     Some(&strip_bind_group_layout),
                     Some(&external_texture_bind_group_layout),
                     Some(&encoded_paints_bind_group_layout),
+                    #[cfg(any(
+                        feature = "gradient_linear",
+                        feature = "gradient_radial",
+                        feature = "gradient_sweep"
+                    ))]
                     Some(&gradient_bind_group_layout),
                 ],
                 immediate_size: 0,
@@ -1678,12 +1708,27 @@ impl Programs {
             &encoded_paints_texture.create_view(&TextureViewDescriptor::default()),
         );
 
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         const INITIAL_GRADIENT_TEXTURE_HEIGHT: u32 = 1;
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         let gradient_texture = Self::create_gradient_texture(
             device,
             resource_texture_dimension_2d,
             INITIAL_GRADIENT_TEXTURE_HEIGHT,
         );
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         let gradient_bind_group = Self::create_gradient_bind_group(
             device,
             &gradient_bind_group_layout,
@@ -1728,7 +1773,17 @@ impl Programs {
             empty_external_texture_bind_group,
             encoded_paints_texture,
             encoded_paints_bind_group,
+            #[cfg(any(
+                feature = "gradient_linear",
+                feature = "gradient_radial",
+                feature = "gradient_sweep"
+            ))]
             gradient_texture,
+            #[cfg(any(
+                feature = "gradient_linear",
+                feature = "gradient_radial",
+                feature = "gradient_sweep"
+            ))]
             gradient_bind_group,
             filter_data_texture,
             filter_base_bind_group,
@@ -1744,6 +1799,11 @@ impl Programs {
             depth_cleared_this_frame: false,
             strip_bind_group_layout,
             encoded_paints_bind_group_layout,
+            #[cfg(any(
+                feature = "gradient_linear",
+                feature = "gradient_radial",
+                feature = "gradient_sweep"
+            ))]
             gradient_bind_group_layout,
             external_texture_bind_group_layout,
             filter_bind_group_layout,
@@ -2071,6 +2131,11 @@ impl Programs {
         })
     }
 
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     fn create_gradient_texture(device: &Device, width: u32, height: u32) -> Texture {
         device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Gradient Texture"),
@@ -2088,6 +2153,11 @@ impl Programs {
         })
     }
 
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     fn create_gradient_bind_group(
         device: &Device,
         gradient_bind_group_layout: &BindGroupLayout,
@@ -2138,6 +2208,11 @@ impl Programs {
         &mut self,
         device: &Device,
         queue: &Queue,
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         gradient_cache: &mut GradientRampCache,
         encoded_paints: &[GpuEncodedPaint],
         alphas: &mut Vec<u8>,
@@ -2155,6 +2230,11 @@ impl Programs {
         self.upload_encoded_paints_texture(queue, encoded_paints, paint_idxs);
         self.upload_filter_texture(queue, filter_context);
 
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         if gradient_cache.has_changed() {
             self.maybe_resize_gradient_tex(device, resource_texture_dimension_2d, gradient_cache);
             self.upload_gradient_texture(queue, gradient_cache);
@@ -2279,6 +2359,11 @@ impl Programs {
     }
 
     /// Update the gradient texture size if needed.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     fn maybe_resize_gradient_tex(
         &mut self,
         device: &Device,
@@ -2496,6 +2581,11 @@ impl Programs {
     }
 
     /// Upload gradient data to the texture.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     fn upload_gradient_texture(&mut self, queue: &Queue, gradient_cache: &mut GradientRampCache) {
         let gradient_texture = &self.resources.gradient_texture;
         let gradient_texture_width = gradient_texture.width();
@@ -2778,6 +2868,11 @@ impl RendererContext<'_> {
         });
         render_pass.set_bind_group(0, bind_group, &[]);
         render_pass.set_bind_group(2, &self.programs.resources.encoded_paints_bind_group, &[]);
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         render_pass.set_bind_group(3, &self.programs.resources.gradient_bind_group, &[]);
         render_pass.set_vertex_buffer(
             0,

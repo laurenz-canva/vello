@@ -653,6 +653,11 @@ impl WebGlRenderer {
         // buffer fills.
         self.programs.prepare(
             &self.gl,
+            #[cfg(any(
+                feature = "gradient_linear",
+                feature = "gradient_radial",
+                feature = "gradient_sweep"
+            ))]
             &mut self.gradient_cache,
             &self.encoded_paints,
             &mut scene.strip_storage.borrow_mut().alphas,
@@ -1178,6 +1183,11 @@ struct StripUniforms {
     /// Encoded paints texture location for vertex shader.
     encoded_paints_texture_vs: WebGlUniformLocation,
     /// Gradient texture location.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     gradient_texture: WebGlUniformLocation,
     /// External texture locations, indexed by shader slot.
     external_textures: [WebGlUniformLocation; EXTERNAL_TEXTURE_SLOT_COUNT],
@@ -1263,10 +1273,20 @@ pub(crate) struct WebGlResources {
     /// Height of encoded paints texture.
     encoded_paints_texture_height: u32,
     /// Gradient texture for gradient ramp data.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     gradient_texture: Texture,
     /// Placeholder texture bound to unoccupied external texture slots.
     placeholder_external_texture: Texture,
     /// Height of gradient texture.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     gradient_texture_height: u32,
 
     /// Config buffer for rendering strips into the root target.
@@ -1575,6 +1595,11 @@ impl WebGlPrograms {
     fn prepare(
         &mut self,
         gl: &WebGl2RenderingContext,
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         gradient_cache: &mut GradientRampCache,
         encoded_paints: &[GpuEncodedPaint],
         alphas: &mut Vec<u8>,
@@ -1595,6 +1620,11 @@ impl WebGlPrograms {
         self.upload_encoded_paints_texture(gl, encoded_paints, paint_idxs)?;
         self.upload_filter_data_texture(gl, filter_context)?;
 
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         if gradient_cache.has_changed() {
             self.maybe_resize_gradient_tex(gl, resource_texture_dimension_2d, gradient_cache)?;
             self.upload_gradient_texture(gl, gradient_cache)?;
@@ -1845,6 +1875,11 @@ impl WebGlPrograms {
     }
 
     /// Grow the gradient texture if needed.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     fn maybe_resize_gradient_tex(
         &mut self,
         gl: &WebGl2RenderingContext,
@@ -1980,6 +2015,11 @@ impl WebGlPrograms {
     }
 
     /// Upload gradient data to the texture.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     fn upload_gradient_texture(
         &mut self,
         gl: &WebGl2RenderingContext,
@@ -2126,7 +2166,6 @@ fn get_strip_uniforms(
     let layer_input_texture_name = render::fragment::LAYER_INPUT_TEXTURE;
     let encoded_paints_texture_fs_name = render::fragment::ENCODED_PAINTS_TEXTURE;
     let encoded_paints_texture_vs_name = render::vertex::ENCODED_PAINTS_TEXTURE;
-    let gradient_texture_name = render::fragment::GRADIENT_TEXTURE;
     // TODO: Change it so this is based on `EXTERNAL_TEXTURE_SLOT_COUNT`.
     let external_texture_names = [render::fragment::EXTERNAL_TEXTURE_0];
 
@@ -2145,7 +2184,16 @@ fn get_strip_uniforms(
             program,
             encoded_paints_texture_vs_name,
         )?,
-        gradient_texture: required_uniform_location(gl, program, gradient_texture_name)?,
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
+        gradient_texture: required_uniform_location(
+            gl,
+            program,
+            render::fragment::GRADIENT_TEXTURE,
+        )?,
         external_textures: [required_uniform_location(
             gl,
             program,
@@ -2485,6 +2533,11 @@ fn create_webgl_resources(
     let encoded_paints_texture = create_placeholder_rgba32ui_texture(gl)?;
 
     // Create and configure gradient texture.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
     let gradient_texture = create_placeholder_rgba8_texture(gl)?;
     let placeholder_external_texture = create_placeholder_rgba8_texture(gl)?;
 
@@ -2502,8 +2555,18 @@ fn create_webgl_resources(
         atlas_size,
         encoded_paints_texture,
         encoded_paints_texture_height: 0,
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         gradient_texture,
         placeholder_external_texture,
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
         gradient_texture_height: 0,
         view_config_buffer,
         view_framebuffer: ViewFramebuffer::default(use_depth_buffer),
@@ -2849,13 +2912,20 @@ impl WebGlRendererContext<'_> {
         );
 
         // Bind gradient texture for gradient rendering
-        self.gl.active_texture(WebGl2RenderingContext::TEXTURE3);
-        self.gl.bind_texture(
-            WebGl2RenderingContext::TEXTURE_2D,
-            Some(&self.programs.resources.gradient_texture),
-        );
-        self.gl
-            .uniform1i(Some(&self.programs.strip_uniforms.gradient_texture), 3);
+        #[cfg(any(
+            feature = "gradient_linear",
+            feature = "gradient_radial",
+            feature = "gradient_sweep"
+        ))]
+        {
+            self.gl.active_texture(WebGl2RenderingContext::TEXTURE3);
+            self.gl.bind_texture(
+                WebGl2RenderingContext::TEXTURE_2D,
+                Some(&self.programs.resources.gradient_texture),
+            );
+            self.gl
+                .uniform1i(Some(&self.programs.strip_uniforms.gradient_texture), 3);
+        }
 
         // External textures are rebound per run while drawing. Start from the placeholder so the
         // sampler is valid for draws that don't reference one.

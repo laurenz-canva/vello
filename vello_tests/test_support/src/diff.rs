@@ -19,6 +19,7 @@ pub struct DiffReport {
 }
 
 impl DiffReport {
+    /// Compute aggregate statistics from the individual pixel differences.
     pub fn new(pixels: Vec<PixelDiff>) -> Self {
         let max_difference = pixels.iter().fold([0; 4], |mut max, p| {
             for (m, d) in max.iter_mut().zip(&p.difference) {
@@ -185,6 +186,10 @@ fn is_pix_diff(pixel1: &Rgba<u8>, pixel2: &Rgba<u8>, threshold: u8) -> bool {
 
 /// Writes `<stem>.png` and `<stem>.json`, creating the parent directory if needed, and returns
 /// both paths. The extensions are appended so a stem containing dots is preserved.
+///
+/// # Panics
+///
+/// Panics if encoding or writing either artifact fails.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_diff(
     stem: &std::path::Path,

@@ -102,36 +102,6 @@ impl GradientRampCache {
         self.evict(entries_to_remove_count);
     }
 
-    /// Get the size of the packed luts.
-    pub(crate) fn luts_size(&self) -> usize {
-        self.luts.len()
-    }
-
-    /// Check if the packed luts is empty.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.luts.is_empty()
-    }
-
-    /// Check if the luts data has changed.
-    pub(crate) fn has_changed(&self) -> bool {
-        self.has_changed
-    }
-
-    /// Mark the luts as synced.
-    pub(crate) fn mark_synced(&mut self) {
-        self.has_changed = false;
-    }
-
-    /// Take ownership of the luts, leaving an empty vector in its place.
-    pub(crate) fn take_luts(&mut self) -> Vec<u8> {
-        core::mem::take(&mut self.luts)
-    }
-
-    /// Restore the luts. The restored luts should have the same logical content as the original.
-    pub(crate) fn restore_luts(&mut self, luts: Vec<u8>) {
-        self.luts = luts;
-    }
-
     /// Remove multiple LRU entries and compact the LUTs vector.
     fn evict(&mut self, count: usize) {
         if count == 0 {
@@ -265,6 +235,49 @@ pub(crate) struct CachedRamp {
     pub width: u32,
     /// Offset in luts where this ramp starts.
     pub lut_start: u32,
+}
+
+#[cfg(any(
+    test,
+    feature = "gradient_linear",
+    feature = "gradient_radial",
+    feature = "gradient_sweep"
+))]
+impl GradientRampCache {
+    /// Get the size of the packed luts.
+    pub(crate) fn luts_size(&self) -> usize {
+        self.luts.len()
+    }
+
+    /// Check if the packed luts is empty.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.luts.is_empty()
+    }
+
+    /// Check if the luts data has changed.
+    pub(crate) fn has_changed(&self) -> bool {
+        self.has_changed
+    }
+
+    /// Mark the luts as synced.
+    #[cfg(any(
+        feature = "gradient_linear",
+        feature = "gradient_radial",
+        feature = "gradient_sweep"
+    ))]
+    pub(crate) fn mark_synced(&mut self) {
+        self.has_changed = false;
+    }
+
+    /// Take ownership of the luts, leaving an empty vector in its place.
+    pub(crate) fn take_luts(&mut self) -> Vec<u8> {
+        core::mem::take(&mut self.luts)
+    }
+
+    /// Restore the luts. The restored luts should have the same logical content as the original.
+    pub(crate) fn restore_luts(&mut self, luts: Vec<u8>) {
+        self.luts = luts;
+    }
 }
 
 /// Generate the gradient LUT.
