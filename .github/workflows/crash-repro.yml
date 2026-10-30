@@ -1,0 +1,291 @@
+name: GPU crash repro
+
+on:
+  pull_request:
+  push:
+    branches:
+      - claude/gpu-crash-repro-*
+  workflow_dispatch:
+
+env:
+  RUST_STABLE_VER: "1.99"
+  LFS_FILES: '["vello_tests/snapshots/*.png"]'
+  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+  CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only"
+  CARGO_PROFILE_RELEASE_STRIP: "none"
+
+jobs:
+  prime-lfs-cache:
+    runs-on: ubuntu-latest
+    outputs:
+      lfs-hash: ${{ steps.calc-hash.outputs.result }}
+    steps:
+    - uses: actions/checkout@v6
+    - id: calc-hash
+      run: echo "result=${{ hashFiles(join(fromJson(env.LFS_FILES), fromJson('"\n"'))) }}" | tee -a "$GITHUB_OUTPUT"
+    - name: Cache git lfs
+      id: lfs-cache
+      uses: actions/cache@v4
+      with:
+        path: .git/lfs
+        key: vello-lfs-repro-${{ steps.calc-hash.outputs.result }}
+        restore-keys: vello-lfs-
+        enableCrossOsArchive: true
+    - name: Fetch lfs data
+      if: ${{ steps.lfs-cache.outputs.cache-hit != 'true' }}
+      run: git lfs fetch --include '${{ join(fromJson(env.LFS_FILES), ',') }}'
+
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            rustflags: ''
+          - os: windows-latest
+            rustflags: --cfg disable_dispatch_sse4_2 --cfg disable_dispatch_avx2 --cfg disable_dispatch_avx512
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_STABLE_VER }}
+      - name: install native dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libfontconfig-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+          cache-bin: true
+      - name: build tests
+        shell: bash
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: |
+          cargo test -p vello_tests --locked --no-default-features --release --test tests --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "tests" and .executable != null) | .executable' > exe.txt
+          cat exe.txt
+          mkdir test-bin
+          exe="$(head -n1 exe.txt)"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp "$exe" test-bin/tests.exe
+            cp "${exe%.exe}.pdb" test-bin/ || cp target/release/deps/tests-*.pdb test-bin/
+          else
+            cp "$exe" test-bin/tests
+          fi
+          ls -la test-bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-bin-${{ matrix.os }}
+          path: test-bin
+          retention-days: 5
+
+  run-linux:
+    name: run linux ${{ matrix.variant }} ${{ matrix.shard }}
+    needs: [prime-lfs-cache, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        include:
+          - variant: baseline
+            iterations: 25
+            args: ''
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs
+          key: vello-lfs-repro-${{ needs.prime-lfs-cache.outputs.lfs-hash }}
+          enableCrossOsArchive: true
+      - run: git lfs checkout '${{ join(fromJson(env.LFS_FILES), ''' ''') }}'
+        continue-on-error: true
+      - name: install xvfb, llvmpipe and lavapipe
+        run: |
+          sudo apt-get update -y -qq
+          sudo add-apt-repository ppa:kisak/turtle -y
+          sudo apt-get update
+          sudo apt install -y xvfb libegl-mesa0 libgl1-mesa-dri libxcb-xfixes0-dev mesa-vulkan-drivers gdb
+          dpkg -l | grep -E 'mesa|llvm' || true
+          nproc
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-bin-ubuntu-latest
+          path: test-bin
+      - name: loop tests
+        shell: bash
+        run: |
+          set +e
+          chmod +x test-bin/tests
+          mkdir -p /tmp/cores logs
+          sudo sysctl -w kernel.core_pattern=/tmp/cores/core.%p
+          ulimit -c unlimited
+          crashes=0
+          for i in $(seq 1 ${{ matrix.iterations }}); do
+            start=$SECONDS
+            (cd vello_tests && timeout 900 ../test-bin/tests ${{ matrix.args }} > ../logs/run-$i.log 2>&1)
+            rc=$?
+            passed=$(grep -c '\.\.\. ok$' logs/run-$i.log)
+            echo "iter=$i rc=$rc ok=$passed secs=$((SECONDS-start))" | tee -a logs/summary.txt
+            if [ $rc -ge 128 ] || [ $rc -eq 124 ]; then
+              crashes=$((crashes+1))
+              tail -n 40 logs/run-$i.log
+              mv logs/run-$i.log logs/crash-run-$i.log
+            else
+              rm logs/run-$i.log
+            fi
+          done
+          echo "crashes=$crashes" | tee -a logs/summary.txt
+          ls -la /tmp/cores
+      - name: analyse cores
+        if: always()
+        shell: bash
+        run: |
+          for c in /tmp/cores/core.*; do
+            [ -e "$c" ] || continue
+            out="logs/bt-$(basename "$c").txt"
+            gdb -batch -nx -ex 'info sharedlibrary' -ex 'echo \n=== faulting thread ===\n' -ex 'bt' -ex 'info registers' -ex 'x/6i $pc' \
+              -ex 'echo \n=== all threads ===\n' -ex 'thread apply all bt' test-bin/tests "$c" > "$out" 2>&1
+            sed -n '/=== faulting thread ===/,/=== all threads ===/p' "$out"
+          done
+      - name: symbolise first core with debuginfod
+        if: always()
+        timeout-minutes: 25
+        shell: bash
+        env:
+          DEBUGINFOD_URLS: https://debuginfod.ubuntu.com
+        run: |
+          c=$(ls /tmp/cores/core.* 2>/dev/null | head -n1)
+          [ -n "$c" ] || exit 0
+          gdb -batch -nx -iex 'set debuginfod enabled on' -ex 'bt' -ex 'echo \n=== all threads ===\n' -ex 'thread apply all bt' \
+            test-bin/tests "$c" > logs/bt-debuginfod.txt 2>&1
+          sed -n '1,/=== all threads ===/p' logs/bt-debuginfod.txt | tail -n 80
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-linux-${{ matrix.variant }}-${{ matrix.shard }}
+          path: logs
+          retention-days: 7
+      - name: fail if crashed
+        shell: bash
+        run: grep -q '^crashes=0$' logs/summary.txt
+
+  run-windows:
+    name: run windows ${{ matrix.variant }} ${{ matrix.shard }}
+    needs: [prime-lfs-cache, build]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline]
+        shard: [1, 2, 3, 4, 5, 6]
+        include:
+          - variant: baseline
+            iterations: 25
+            pageheap: ''
+            args: ''
+          - variant: pageheap
+            shard: 1
+            iterations: 4
+            pageheap: full
+            args: ''
+          - variant: pageheap
+            shard: 2
+            iterations: 4
+            pageheap: full
+            args: ''
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs
+          key: vello-lfs-repro-${{ needs.prime-lfs-cache.outputs.lfs-hash }}
+          enableCrossOsArchive: true
+      - run: git lfs checkout '${{ join(fromJson(env.LFS_FILES), ''' ''') }}'
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-bin-windows-latest
+          path: test-bin
+      - name: configure dumps
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\dumps | Out-Null
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\tests.exe'
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpFolder -Value 'C:\dumps' -PropertyType ExpandString -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpType -Value 2 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpCount -Value 5 -PropertyType DWord -Force | Out-Null
+          $dbg = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64'
+          Get-ChildItem $dbg -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+          if ('${{ matrix.pageheap }}' -eq 'full') { & "$dbg\gflags.exe" /p /enable tests.exe /full; & "$dbg\gflags.exe" /p }
+          Get-CimInstance Win32_VideoController | Format-List Name, DriverVersion
+          Get-CimInstance Win32_ComputerSystem | Format-List NumberOfLogicalProcessors, TotalPhysicalMemory
+      - name: loop tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          $crashes = 0
+          for ($i = 1; $i -le ${{ matrix.iterations }}; $i++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $log = Join-Path $PWD "logs\run-$i.log"
+            $err = Join-Path $PWD "logs\run-$i.err"
+            $spArgs = @{
+              FilePath = Join-Path $PWD 'test-bin\tests.exe'
+              WorkingDirectory = Join-Path $PWD 'vello_tests'
+              RedirectStandardOutput = $log
+              RedirectStandardError = $err
+            }
+            $argList = @('${{ matrix.args }}'.Split(' ', [StringSplitOptions]::RemoveEmptyEntries))
+            if ($argList.Count -gt 0) { $spArgs.ArgumentList = $argList }
+            $p = Start-Process @spArgs -NoNewWindow -PassThru
+            $null = $p.Handle
+            if (-not $p.WaitForExit(1800000)) { $p.Kill(); $p.WaitForExit() }
+            $rc = '0x{0:x8}' -f $p.ExitCode
+            $ok = (Select-String -Path $log -Pattern '\.\.\. ok$').Count
+            "iter=$i rc=$rc ok=$ok secs=$([int]$sw.Elapsed.TotalSeconds)" | Tee-Object -Append logs\summary.txt
+            if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 101) {
+              $crashes++
+              Get-Content $log -Tail 30
+              Get-Content $err -Tail 30
+              Move-Item $log "logs\crash-run-$i.log"
+              Move-Item $err "logs\crash-run-$i.err"
+            } else {
+              Remove-Item $log, $err
+            }
+          }
+          "crashes=$crashes" | Tee-Object -Append logs\summary.txt
+          Get-ChildItem C:\dumps
+      - name: analyse dumps
+        if: always()
+        shell: pwsh
+        run: |
+          $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+          if (-not (Test-Path $cdb)) { 'cdb not found'; exit 0 }
+          $sym = "srv*C:\symcache*https://msdl.microsoft.com/download/symbols;$PWD\test-bin"
+          Get-ChildItem C:\dumps -Filter *.dmp | Select-Object -First 3 | ForEach-Object {
+            $out = "logs\cdb-$($_.BaseName).txt"
+            & $cdb -z $_.FullName -y $sym -lines -c ".ecxr; kv 60; !analyze -v; lm; ~* k 40; q" *> $out
+            Get-Content $out | Select-String -Pattern 'FAULTING|STACK_TEXT|SYMBOL_NAME|MODULE_NAME|IMAGE_NAME|FAILURE_BUCKET' -Context 0,25 | Select-Object -First 8
+          }
+      - name: compress first dump
+        if: always()
+        shell: pwsh
+        run: |
+          $d = Get-ChildItem C:\dumps -Filter *.dmp | Select-Object -First 1
+          if ($d) { Compress-Archive -Path $d.FullName -DestinationPath logs\first-dump.zip; Get-Item logs\first-dump.zip }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-windows-${{ matrix.variant }}-${{ matrix.shard }}
+          path: logs
+          retention-days: 7
+      - name: fail if crashed
+        shell: pwsh
+        run: if (-not (Select-String -Path logs\summary.txt -Pattern '^crashes=0$' -Quiet)) { exit 1 }
