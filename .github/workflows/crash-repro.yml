@@ -1,6 +1,7 @@
 name: GPU crash repro
 
 on:
+  pull_request:
   push:
     branches:
       - claude/gpu-crash-repro-*
